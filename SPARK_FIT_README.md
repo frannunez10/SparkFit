@@ -18,13 +18,15 @@ Sitio web moderno y completo para gestión de turnos de un centro de fitness pre
 
 ### Panel de Cliente
 - Visualización de créditos disponibles
-- Calendario interactivo de turnos disponibles
-- Reservar turnos (consume créditos)
+- **Nuevo flujo de reserva en 3 pasos**:
+  1. Seleccionar fecha en calendario personalizado (máximo 1 semana de anticipación)
+  2. Seleccionar horario disponible (huecos llenos aparecen deshabilitados en color oscuro)
+  3. Seleccionar actividad disponible para ese horario
 - Cancelar turnos con política de 6 horas:
   - Cancelación >6h: devuelve créditos
   - Cancelación <6h: NO devuelve créditos
 - Historial de reservas (activas y canceladas)
-- Filtros por tipo de actividad
+- **Cupos internos**: El sistema controla ocupación pero no muestra números al cliente
 
 ### Panel de Administración
 - Crear/eliminar turnos con:
@@ -54,18 +56,18 @@ Sitio web moderno y completo para gestión de turnos de un centro de fitness pre
 - **UI Components**: Shadcn/UI + Tailwind CSS
 - **Animaciones**: Framer Motion
 
-## 🔑 Credenciales de Prueba
+## 🔑 Credenciales de Acceso
 
 ### Administradores (3 pre-configurados)
 ```
-Email: admin1@sparkfit.com
-Password: admin123
+Email: AdministracionGimnasio1@gmail.com
+Password: AdministracionGimnasio1.2026
 
-Email: admin2@sparkfit.com
-Password: admin123
+Email: AdministracionGimnasio2@gmail.com
+Password: AdministracionGimnasio2.2026
 
-Email: admin3@sparkfit.com
-Password: admin123
+Email: AdministracionGimnasio3@gmail.com
+Password: AdministracionGimnasio3.2026
 ```
 
 ### Cliente de Prueba
@@ -75,19 +77,28 @@ Password: cliente123
 Créditos: 10
 ```
 
-## 📋 Información de Servicios
+## 📋 Horarios y Reglas del Negocio
 
-### Entrenamiento Personalizado / Rehabilitación
-- Lunes a Viernes: 06:00 - 10:00
-- Lunes a Viernes: 17:00 - 21:00
-- Máximo 5 personas por sesión
-- Duración: 1 hora
+### Entrenamiento y Rehabilitación
+- **Días**: Lunes a Viernes
+- **Horarios**: 
+  - Mañana: 06:00 - 10:00
+  - Tarde: 17:00 - 21:00
+- **Duración**: 1 hora por sesión
+- **Capacidad**: Máximo 5 personas por turno
 
 ### Nutrición
-- Martes, Jueves y Sábados
-- Horarios: 10:00, 11:00, 12:00
-- Consultas individuales
-- Duración: consulta personalizada
+- **Días**: Martes, Jueves y Sábados
+- **Horarios**: 10:00, 11:00, 12:00
+- **Duración**: 1 hora
+- **Capacidad**: 1 persona (consulta individual)
+
+### Reglas de Reserva
+- **Anticipación máxima**: 1 semana (7 días)
+- **Política de cancelación**: 
+  - Más de 6 horas antes: devuelve créditos
+  - Menos de 6 horas: NO devuelve créditos
+- **Cupos**: El sistema controla ocupación internamente pero no muestra números específicos al cliente
 
 ## 🛠️ Tecnologías
 
@@ -204,17 +215,32 @@ Créditos: 10
 
 ## 🎯 Flujos Principales
 
-### Flujo de Reserva (Cliente)
-1. Cliente inicia sesión
-2. Visualiza calendario con turnos disponibles
-3. Filtra por tipo de actividad (opcional)
-4. Selecciona un turno
-5. Confirma la reserva
-6. Sistema verifica créditos disponibles
-7. Se descuentan los créditos
-8. Se incrementa el contador de reservas del turno
-9. Se envía email de confirmación
-10. Reserva aparece en "Mis Reservas"
+### Flujo de Reserva (Cliente) - 3 Pasos
+1. **Paso 1 - Seleccionar Fecha:**
+   - Cliente ve calendario personalizado del mes actual
+   - Día actual resaltado en azul
+   - Días pasados y más allá de 7 días deshabilitados
+   - Solo puede seleccionar fechas dentro de la próxima semana
+   
+2. **Paso 2 - Seleccionar Horario:**
+   - Sistema muestra horarios disponibles para la fecha elegida
+   - Horarios totalmente ocupados aparecen en color oscuro y deshabilitados
+   - Horarios con disponibilidad son clickeables
+   
+3. **Paso 3 - Seleccionar Actividad:**
+   - Muestra solo actividades disponibles para ese horario específico
+   - Valida automáticamente los horarios permitidos por tipo de actividad:
+     - Entrenamiento/Rehabilitación: L-V 6-10am, 5-9pm
+     - Nutrición: Ma-Ju-Sa 10am, 11am, 12pm
+   - Muestra costo en créditos
+   - Cliente confirma la reserva
+   
+4. **Confirmación:**
+   - Sistema verifica créditos disponibles
+   - Se descuentan los créditos
+   - Se incrementa el contador de reservas del turno
+   - Se envía email de confirmación
+   - Reserva aparece en "Mis Reservas"
 
 ### Flujo de Cancelación (Cliente)
 1. Cliente ve sus reservas activas

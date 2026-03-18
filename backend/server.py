@@ -444,20 +444,97 @@ async def get_available_slots(
     activity_type: Optional[str] = Query(None),
     current_user: User = Depends(get_current_user)
 ):
+    # Limit to 1 week in advance
+    from datetime import timedelta
+    today = datetime.now(timezone.utc).date()
+    max_date = today + timedelta(days=7)
+    
     query = {}
     if date:
+        query_date = datetime.fromisoformat(date).date()
+        if query_date > max_date:
+            return []
         query['date'] = date
     if activity_type:
         query['activity_type'] = activity_type.lower()
     
     slots = await db.slots.find(query, {'_id': 0}).to_list(1000)
     
-    # Add availability info
+    # Add availability info but don't expose exact numbers
     for slot in slots:
         slot['available'] = slot['current_bookings'] < slot['max_capacity']
-        slot['spots_left'] = slot['max_capacity'] - slot['current_bookings']
+        slot['is_full'] = slot['current_bookings'] >= slot['max_capacity']
     
     return slots
+
+@api_router.get('/calendar/time-slots')
+async def get_time_slots_by_date(
+    date: str = Query(...),
+    current_user: User = Depends(get_current_user)
+):
+    """Get available time slots for a specific date, grouped by hour"""
+    # Limit to 1 week in advance
+    from datetime import timedelta
+    today = datetime.now(timezone.utc).date()
+    max_date = today + timedelta(days=7)
+    query_date = datetime.fromisoformat(date).date()
+    
+    if query_date > max_date:
+        return []
+    
+    # Get all slots for this date
+    slots = await db.slots.find({'date': date}, {'_id': 0}).to_list(1000)
+    
+    # Group by time and check availability
+    time_slots = {}
+    for slot in slots:
+        time = slot['time']
+        if time not in time_slots:
+            time_slots[time] = {
+                'time': time,
+                'slots': [],
+                'has_available': False,
+                'is_full': True
+            }
+        
+        is_available = slot['current_bookings'] < slot['max_capacity']
+        time_slots[time]['slots'].append({
+            'slot_id': slot['slot_id'],
+            'activity_type': slot['activity_type'],
+            'available': is_available,
+            'credits_cost': slot['credits_cost']
+        })
+        
+        if is_available:
+            time_slots[time]['has_available'] = True
+            time_slots[time]['is_full'] = False
+    
+    # Convert to list and sort by time
+    result = sorted(time_slots.values(), key=lambda x: x['time'])
+    return result
+
+@api_router.get('/calendar/activities-for-slot')
+async def get_activities_for_slot(
+    date: str = Query(...),
+    time: str = Query(...),
+    current_user: User = Depends(get_current_user)
+):
+    """Get available activities for a specific date and time"""
+    slots = await db.slots.find({
+        'date': date,
+        'time': time
+    }, {'_id': 0}).to_list(100)
+    
+    activities = []
+    for slot in slots:
+        if slot['current_bookings'] < slot['max_capacity']:
+            activities.append({
+                'slot_id': slot['slot_id'],
+                'activity_type': slot['activity_type'],
+                'credits_cost': slot['credits_cost']
+            })
+    
+    return activities
 
 @api_router.post('/bookings')
 async def create_booking(booking_data: BookingCreate, current_user: User = Depends(get_current_user)):

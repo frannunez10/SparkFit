@@ -2,17 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import axios from 'axios';
 import { toast } from 'sonner';
-import { Calendar as BigCalendar, momentLocalizer } from 'react-big-calendar';
-import moment from 'moment';
-import 'moment/locale/es';
-import 'react-big-calendar/lib/css/react-big-calendar.css';
 import { Button } from '../components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../components/ui/dialog';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
-import { LogOut, Calendar, CreditCard, History, User, Clock, X } from 'lucide-react';
-
-moment.locale('es');
-const localizer = momentLocalizer(moment);
+import { LogOut, Calendar, CreditCard, History, ChevronLeft, ChevronRight, Clock, X } from 'lucide-react';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -22,19 +14,27 @@ const ClientDashboard = () => {
   const location = useLocation();
   const [user, setUser] = useState(location.state?.user || null);
   const [loading, setLoading] = useState(!user);
-  const [slots, setSlots] = useState([]);
   const [myBookings, setMyBookings] = useState([]);
-  const [selectedSlot, setSelectedSlot] = useState(null);
-  const [showBookingModal, setShowBookingModal] = useState(false);
+  
+  // Calendar state
+  const [currentDate, setCurrentDate] = useState(new Date());
+  const [selectedDate, setSelectedDate] = useState(null);
+  const [selectedTime, setSelectedTime] = useState(null);
+  const [selectedActivity, setSelectedActivity] = useState(null);
+  const [timeSlots, setTimeSlots] = useState([]);
+  const [availableActivities, setAvailableActivities] = useState([]);
+  
+  // Modal states
+  const [showBookingFlow, setShowBookingFlow] = useState(false);
+  const [bookingStep, setBookingStep] = useState(1); // 1: date, 2: time, 3: activity
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [selectedBooking, setSelectedBooking] = useState(null);
-  const [filterActivity, setFilterActivity] = useState('all');
 
   useEffect(() => {
     if (!user) {
       checkAuth();
     } else {
-      loadData();
+      loadBookings();
     }
   }, []);
 
@@ -49,16 +49,12 @@ const ClientDashboard = () => {
     }
   };
 
-  const loadData = async () => {
+  const loadBookings = async () => {
     try {
-      const [slotsRes, bookingsRes] = await Promise.all([
-        axios.get(`${API}/calendar/available`, { withCredentials: true }),
-        axios.get(`${API}/bookings/my`, { withCredentials: true })
-      ]);
-      setSlots(slotsRes.data);
-      setMyBookings(bookingsRes.data);
+      const response = await axios.get(`${API}/bookings/my`, { withCredentials: true });
+      setMyBookings(response.data);
     } catch (error) {
-      toast.error('Error al cargar datos');
+      toast.error('Error al cargar reservas');
     }
   };
 
@@ -72,21 +68,118 @@ const ClientDashboard = () => {
     }
   };
 
-  const handleBooking = async () => {
-    if (!selectedSlot) return;
+  const getDaysInMonth = (date) => {
+    const year = date.getFullYear();
+    const month = date.getMonth();
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
+    const daysInMonth = lastDay.getDate();
+    const startingDayOfWeek = firstDay.getDay();
+    
+    const days = [];
+    
+    // Add empty slots for days before month starts
+    for (let i = 0; i < startingDayOfWeek; i++) {
+      days.push(null);
+    }
+    
+    // Add days of month
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const maxDate = new Date(today);
+    maxDate.setDate(maxDate.getDate() + 7); // 1 week limit
+    
+    for (let day = 1; day <= daysInMonth; day++) {
+      const currentDay = new Date(year, month, day);
+      currentDay.setHours(0, 0, 0, 0);
+      
+      const isPast = currentDay < today;
+      const isBeyondLimit = currentDay > maxDate;
+      const isDisabled = isPast || isBeyondLimit;
+      
+      days.push({
+        day,
+        date: currentDay,
+        isToday: currentDay.getTime() === today.getTime(),
+        isDisabled
+      });
+    }
+    
+    return days;
+  };
 
+  const formatDateForAPI = (date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  const handleDateSelect = async (dateObj) => {
+    if (dateObj.isDisabled) return;
+    
+    setSelectedDate(dateObj.date);
+    setSelectedTime(null);
+    setSelectedActivity(null);
+    setBookingStep(2);
+    
+    // Load time slots for selected date
     try {
-      await axios.post(`${API}/bookings`, { slot_id: selectedSlot.slot_id }, { withCredentials: true });
+      const formattedDate = formatDateForAPI(dateObj.date);
+      const response = await axios.get(`${API}/calendar/time-slots?date=${formattedDate}`, { withCredentials: true });
+      setTimeSlots(response.data);
+    } catch (error) {
+      toast.error('Error al cargar horarios');
+    }
+  };
+
+  const handleTimeSelect = async (time) => {
+    setSelectedTime(time);
+    setSelectedActivity(null);
+    setBookingStep(3);
+    
+    // Load available activities for selected time
+    try {
+      const formattedDate = formatDateForAPI(selectedDate);
+      const response = await axios.get(
+        `${API}/calendar/activities-for-slot?date=${formattedDate}&time=${time}`,
+        { withCredentials: true }
+      );
+      setAvailableActivities(response.data);
+    } catch (error) {
+      toast.error('Error al cargar actividades');
+    }
+  };
+
+  const handleActivitySelect = (activity) => {
+    setSelectedActivity(activity);
+  };
+
+  const handleConfirmBooking = async () => {
+    if (!selectedActivity) return;
+    
+    try {
+      await axios.post(`${API}/bookings`, { slot_id: selectedActivity.slot_id }, { withCredentials: true });
       toast.success('Turno reservado exitosamente');
-      setShowBookingModal(false);
-      setSelectedSlot(null);
-      loadData();
+      setShowBookingFlow(false);
+      resetBookingFlow();
+      loadBookings();
+      
       // Reload user to get updated credits
       const userRes = await axios.get(`${API}/auth/me`, { withCredentials: true });
       setUser(userRes.data);
     } catch (error) {
       toast.error(error.response?.data?.detail || 'Error al reservar');
     }
+  };
+
+  const resetBookingFlow = () => {
+    setSelectedDate(null);
+    setSelectedTime(null);
+    setSelectedActivity(null);
+    setBookingStep(1);
+    setTimeSlots([]);
+    setAvailableActivities([]);
   };
 
   const handleCancelBooking = async () => {
@@ -101,22 +194,13 @@ const ClientDashboard = () => {
       }
       setShowCancelModal(false);
       setSelectedBooking(null);
-      loadData();
-      // Reload user to get updated credits
+      loadBookings();
+      
       const userRes = await axios.get(`${API}/auth/me`, { withCredentials: true });
       setUser(userRes.data);
     } catch (error) {
       toast.error(error.response?.data?.detail || 'Error al cancelar');
     }
-  };
-
-  const getActivityColor = (activity) => {
-    const colors = {
-      entrenamiento: '#2563EB',
-      rehabilitacion: '#10B981',
-      nutricion: '#F59E0B'
-    };
-    return colors[activity] || '#2563EB';
   };
 
   const getActivityLabel = (activity) => {
@@ -128,32 +212,25 @@ const ClientDashboard = () => {
     return labels[activity] || activity;
   };
 
-  // Convert slots to calendar events
-  const calendarEvents = slots
-    .filter(slot => filterActivity === 'all' || slot.activity_type === filterActivity)
-    .map(slot => ({
-      id: slot.slot_id,
-      title: `${getActivityLabel(slot.activity_type)} (${slot.current_bookings}/${slot.max_capacity})`,
-      start: new Date(`${slot.date}T${slot.time}:00`),
-      end: new Date(`${slot.date}T${slot.time}:00`),
-      resource: slot,
-      color: getActivityColor(slot.activity_type)
-    }));
-
-  const eventStyleGetter = (event) => {
-    return {
-      style: {
-        backgroundColor: event.color,
-        borderRadius: '4px',
-        opacity: 0.9,
-        color: 'white',
-        border: '0px',
-        display: 'block',
-        fontSize: '0.85rem',
-        padding: '2px 4px'
-      }
+  const getActivityColor = (activity) => {
+    const colors = {
+      entrenamiento: '#2563EB',
+      rehabilitacion: '#10B981',
+      nutricion: '#F59E0B'
     };
+    return colors[activity] || '#2563EB';
   };
+
+  const previousMonth = () => {
+    setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1));
+  };
+
+  const nextMonth = () => {
+    setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1));
+  };
+
+  const monthNames = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+  const dayNames = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 
   if (loading) {
     return (
@@ -229,55 +306,19 @@ const ClientDashboard = () => {
           </div>
         </div>
 
-        {/* Calendar Section */}
-        <div className="glass-card p-6 mb-8" data-testid="calendar-section">
-          <div className="flex justify-between items-center mb-6">
-            <h2 className="font-barlow text-2xl font-bold text-white uppercase">Calendario de Turnos</h2>
-            <Select value={filterActivity} onValueChange={setFilterActivity}>
-              <SelectTrigger className="w-48 bg-zinc-950 border-zinc-800" data-testid="activity-filter">
-                <SelectValue placeholder="Filtrar actividad" />
-              </SelectTrigger>
-              <SelectContent className="bg-zinc-900 border-zinc-800">
-                <SelectItem value="all">Todas las actividades</SelectItem>
-                <SelectItem value="entrenamiento">Entrenamiento</SelectItem>
-                <SelectItem value="rehabilitacion">Rehabilitación</SelectItem>
-                <SelectItem value="nutricion">Nutrición</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div style={{ height: '600px' }} className="bg-zinc-900/50 p-4 rounded">
-            <BigCalendar
-              localizer={localizer}
-              events={calendarEvents}
-              startAccessor="start"
-              endAccessor="end"
-              style={{ height: '100%' }}
-              eventPropGetter={eventStyleGetter}
-              onSelectEvent={(event) => {
-                if (event.resource.available) {
-                  setSelectedSlot(event.resource);
-                  setShowBookingModal(true);
-                } else {
-                  toast.info('Este turno está lleno');
-                }
-              }}
-              messages={{
-                next: 'Siguiente',
-                previous: 'Anterior',
-                today: 'Hoy',
-                month: 'Mes',
-                week: 'Semana',
-                day: 'Día',
-                agenda: 'Agenda',
-                date: 'Fecha',
-                time: 'Hora',
-                event: 'Turno',
-                noEventsInRange: 'No hay turnos en este rango'
-              }}
-              data-testid="calendar-widget"
-            />
-          </div>
+        {/* Reserve Button */}
+        <div className="mb-8">
+          <Button
+            onClick={() => {
+              resetBookingFlow();
+              setShowBookingFlow(true);
+            }}
+            className="w-full md:w-auto bg-primary hover:bg-primary/90 text-lg py-6 px-8"
+            data-testid="open-booking-button"
+          >
+            <Calendar className="w-5 h-5 mr-2" />
+            Reservar Nuevo Turno
+          </Button>
         </div>
 
         {/* My Bookings */}
@@ -328,7 +369,6 @@ const ClientDashboard = () => {
                         }`}>
                           {booking.status === 'confirmed' ? 'Confirmada' : 'Cancelada'}
                         </span>
-                        <p className="text-white/40 text-xs mt-1">{booking.credits_cost} créditos</p>
                       </div>
                       {booking.status === 'confirmed' && (
                         <Button
@@ -353,56 +393,186 @@ const ClientDashboard = () => {
         </div>
       </div>
 
-      {/* Booking Modal */}
-      <Dialog open={showBookingModal} onOpenChange={setShowBookingModal}>
-        <DialogContent className="bg-zinc-900 border-zinc-800 text-white" data-testid="booking-modal">
+      {/* Booking Flow Modal */}
+      <Dialog open={showBookingFlow} onOpenChange={(open) => {
+        if (!open) resetBookingFlow();
+        setShowBookingFlow(open);
+      }}>
+        <DialogContent className="bg-zinc-900 border-zinc-800 text-white max-w-4xl" data-testid="booking-modal">
           <DialogHeader>
-            <DialogTitle className="font-barlow text-2xl uppercase">Confirmar Reserva</DialogTitle>
+            <DialogTitle className="font-barlow text-2xl uppercase">
+              Reservar Turno - Paso {bookingStep} de 3
+            </DialogTitle>
             <DialogDescription className="text-white/60">
-              Revisa los detalles de tu turno antes de confirmar
+              {bookingStep === 1 && 'Selecciona una fecha (máximo 1 semana de anticipación)'}
+              {bookingStep === 2 && 'Selecciona un horario disponible'}
+              {bookingStep === 3 && 'Selecciona la actividad que deseas realizar'}
             </DialogDescription>
           </DialogHeader>
-          {selectedSlot && (
-            <div className="space-y-4 py-4">
-              <div className="flex items-center justify-between p-4 bg-zinc-950 rounded">
-                <span className="text-white/60">Actividad:</span>
-                <span className="font-bold text-white uppercase">{getActivityLabel(selectedSlot.activity_type)}</span>
+
+          {/* Step 1: Date Selection */}
+          {bookingStep === 1 && (
+            <div className="py-4">
+              <div className="flex items-center justify-between mb-6">
+                <Button
+                  onClick={previousMonth}
+                  variant="ghost"
+                  size="sm"
+                  className="text-white hover:bg-white/10"
+                >
+                  <ChevronLeft className="w-5 h-5" />
+                </Button>
+                <h3 className="font-barlow text-xl font-bold text-white">
+                  {monthNames[currentDate.getMonth()]} {currentDate.getFullYear()}
+                </h3>
+                <Button
+                  onClick={nextMonth}
+                  variant="ghost"
+                  size="sm"
+                  className="text-white hover:bg-white/10"
+                >
+                  <ChevronRight className="w-5 h-5" />
+                </Button>
               </div>
-              <div className="flex items-center justify-between p-4 bg-zinc-950 rounded">
-                <span className="text-white/60">Fecha:</span>
-                <span className="font-bold text-white">{selectedSlot.date}</span>
+
+              <div className="grid grid-cols-7 gap-2 mb-2">
+                {dayNames.map(day => (
+                  <div key={day} className="text-center text-white/60 text-sm font-semibold py-2">
+                    {day}
+                  </div>
+                ))}
               </div>
-              <div className="flex items-center justify-between p-4 bg-zinc-950 rounded">
-                <span className="text-white/60">Hora:</span>
-                <span className="font-bold text-white">{selectedSlot.time}</span>
+
+              <div className="grid grid-cols-7 gap-2">
+                {getDaysInMonth(currentDate).map((dayObj, index) => (
+                  <button
+                    key={index}
+                    onClick={() => dayObj && handleDateSelect(dayObj)}
+                    disabled={!dayObj || dayObj.isDisabled}
+                    className={`
+                      aspect-square p-2 rounded-lg text-sm font-medium transition-all
+                      ${
+                        !dayObj
+                          ? 'invisible'
+                          : dayObj.isDisabled
+                          ? 'bg-zinc-900/50 text-white/20 cursor-not-allowed'
+                          : dayObj.isToday
+                          ? 'bg-primary text-white hover:bg-primary/90'
+                          : 'bg-zinc-800/50 text-white hover:bg-zinc-700'
+                      }
+                    `}
+                  >
+                    {dayObj?.day}
+                  </button>
+                ))}
               </div>
-              <div className="flex items-center justify-between p-4 bg-zinc-950 rounded">
-                <span className="text-white/60">Costo:</span>
-                <span className="font-bold text-primary">{selectedSlot.credits_cost} créditos</span>
-              </div>
-              <div className="flex items-center justify-between p-4 bg-zinc-950 rounded">
-                <span className="text-white/60">Lugares disponibles:</span>
-                <span className="font-bold text-white">{selectedSlot.spots_left} / {selectedSlot.max_capacity}</span>
-              </div>
-              
-              {user?.credits < selectedSlot.credits_cost ? (
-                <div className="bg-red-500/10 border border-red-500/20 p-4 rounded">
-                  <p className="text-red-400 text-sm">No tienes suficientes créditos para esta reserva</p>
-                </div>
+            </div>
+          )}
+
+          {/* Step 2: Time Selection */}
+          {bookingStep === 2 && (
+            <div className="py-4">
+              <Button
+                onClick={() => setBookingStep(1)}
+                variant="ghost"
+                size="sm"
+                className="mb-4 text-white/60 hover:text-white"
+              >
+                <ChevronLeft className="w-4 h-4 mr-1" />
+                Cambiar fecha
+              </Button>
+
+              <p className="text-white mb-4">Fecha seleccionada: <span className="text-primary font-bold">{selectedDate?.toLocaleDateString('es-AR')}</span></p>
+
+              {timeSlots.length === 0 ? (
+                <p className="text-white/60 text-center py-8">No hay horarios disponibles para esta fecha</p>
               ) : (
-                <div className="flex space-x-3">
-                  <Button 
-                    onClick={handleBooking} 
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                  {timeSlots.map((slot) => (
+                    <button
+                      key={slot.time}
+                      onClick={() => !slot.is_full && handleTimeSelect(slot.time)}
+                      disabled={slot.is_full}
+                      className={`
+                        p-4 rounded-lg border transition-all text-center
+                        ${
+                          slot.is_full
+                            ? 'bg-zinc-900/30 border-white/5 text-white/30 cursor-not-allowed'
+                            : 'bg-zinc-800/50 border-white/10 text-white hover:border-primary hover:bg-zinc-700'
+                        }
+                      `}
+                    >
+                      <Clock className="w-6 h-6 mx-auto mb-2" />
+                      <p className="font-bold">{slot.time}</p>
+                      {slot.is_full && <p className="text-xs mt-1">Completo</p>}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Step 3: Activity Selection */}
+          {bookingStep === 3 && (
+            <div className="py-4">
+              <Button
+                onClick={() => setBookingStep(2)}
+                variant="ghost"
+                size="sm"
+                className="mb-4 text-white/60 hover:text-white"
+              >
+                <ChevronLeft className="w-4 h-4 mr-1" />
+                Cambiar horario
+              </Button>
+
+              <p className="text-white mb-2">Fecha: <span className="text-primary font-bold">{selectedDate?.toLocaleDateString('es-AR')}</span></p>
+              <p className="text-white mb-4">Hora: <span className="text-primary font-bold">{selectedTime}</span></p>
+
+              {availableActivities.length === 0 ? (
+                <p className="text-white/60 text-center py-8">No hay actividades disponibles para este horario</p>
+              ) : (
+                <div className="space-y-3">
+                  {availableActivities.map((activity) => (
+                    <button
+                      key={activity.slot_id}
+                      onClick={() => handleActivitySelect(activity)}
+                      className={`
+                        w-full p-4 rounded-lg border transition-all text-left
+                        ${
+                          selectedActivity?.slot_id === activity.slot_id
+                            ? 'bg-primary/20 border-primary'
+                            : 'bg-zinc-800/50 border-white/10 hover:border-primary/50'
+                        }
+                      `}
+                    >
+                      <div className="flex justify-between items-center">
+                        <div>
+                          <h3 className="font-bold text-white text-lg uppercase">
+                            {getActivityLabel(activity.activity_type)}
+                          </h3>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-primary font-bold">{activity.credits_cost} créditos</p>
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {selectedActivity && (
+                <div className="mt-6 flex space-x-3">
+                  <Button
+                    onClick={handleConfirmBooking}
                     className="flex-1 bg-primary hover:bg-primary/90"
                     data-testid="confirm-booking-button"
                   >
                     Confirmar Reserva
                   </Button>
-                  <Button 
-                    onClick={() => setShowBookingModal(false)} 
+                  <Button
+                    onClick={() => setShowBookingFlow(false)}
                     variant="outline"
                     className="flex-1 border-white/20"
-                    data-testid="cancel-booking-modal-button"
                   >
                     Cancelar
                   </Button>
