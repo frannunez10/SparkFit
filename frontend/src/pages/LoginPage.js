@@ -6,7 +6,7 @@ import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
-import { LogIn, UserPlus } from 'lucide-react';
+import { LogIn, UserPlus, Eye, EyeOff } from 'lucide-react';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -17,6 +17,7 @@ const LoginPage = () => {
   
   // Login state
   const [loginData, setLoginData] = useState({ email: '', password: '' });
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
   
   // Register state
   const [registerData, setRegisterData] = useState({
@@ -25,6 +26,7 @@ const LoginPage = () => {
     password: '',
     role: 'client'
   });
+  const [showRegisterPassword, setShowRegisterPassword] = useState(false);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -122,16 +124,25 @@ const LoginPage = () => {
                 </div>
                 <div>
                   <Label htmlFor="login-password" className="text-white mb-2 block">Contraseña</Label>
-                  <Input
-                    id="login-password"
-                    type="password"
-                    placeholder="••••••••"
-                    value={loginData.password}
-                    onChange={(e) => setLoginData({ ...loginData, password: e.target.value })}
-                    required
-                    className="bg-zinc-950 border-zinc-800 focus:border-primary h-12"
-                    data-testid="login-password-input"
-                  />
+                  <div className="relative">
+                    <Input
+                      id="login-password"
+                      type={showLoginPassword ? "text" : "password"}
+                      placeholder="••••••••"
+                      value={loginData.password}
+                      onChange={(e) => setLoginData({ ...loginData, password: e.target.value })}
+                      required
+                      className="bg-zinc-950 border-zinc-800 focus:border-primary h-12 pr-10"
+                      data-testid="login-password-input"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowLoginPassword(!showLoginPassword)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-white/60 hover:text-white"
+                    >
+                      {showLoginPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                    </button>
+                  </div>
                 </div>
                 <Button 
                   type="submit" 
@@ -200,17 +211,26 @@ const LoginPage = () => {
                 </div>
                 <div>
                   <Label htmlFor="register-password" className="text-white mb-2 block">Contraseña</Label>
-                  <Input
-                    id="register-password"
-                    type="password"
-                    placeholder="••••••••"
-                    value={registerData.password}
-                    onChange={(e) => setRegisterData({ ...registerData, password: e.target.value })}
-                    required
-                    minLength={6}
-                    className="bg-zinc-950 border-zinc-800 focus:border-primary h-12"
-                    data-testid="register-password-input"
-                  />
+                  <div className="relative">
+                    <Input
+                      id="register-password"
+                      type={showRegisterPassword ? "text" : "password"}
+                      placeholder="••••••••"
+                      value={registerData.password}
+                      onChange={(e) => setRegisterData({ ...registerData, password: e.target.value })}
+                      required
+                      minLength={6}
+                      className="bg-zinc-950 border-zinc-800 focus:border-primary h-12 pr-10"
+                      data-testid="register-password-input"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowRegisterPassword(!showRegisterPassword)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-white/60 hover:text-white"
+                    >
+                      {showRegisterPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                    </button>
+                  </div>
                 </div>
                 <Button 
                   type="submit" 

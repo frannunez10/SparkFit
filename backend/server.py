@@ -111,6 +111,11 @@ class ScheduleOverride(BaseModel):
     is_closed: bool
     custom_hours: Optional[List[int]] = None
 
+class WeeklyScheduleConfig(BaseModel):
+    day_of_week: int  # 0=Monday, 6=Sunday
+    is_closed: bool = False
+    custom_hours: Optional[List[int]] = None
+
 # ==================== HELPER FUNCTIONS ====================
 
 def hash_password(password: str) -> str:
@@ -193,9 +198,18 @@ async def get_activity_config(activity_type: str) -> Dict:
 
 async def is_date_closed(date_str: str) -> tuple[bool, Optional[List[int]]]:
     """Check if a date is closed or has custom hours"""
+    # First check for specific date override
     override = await db.schedule_overrides.find_one({'date': date_str}, {'_id': 0})
     if override:
         return override.get('is_closed', False), override.get('custom_hours')
+    
+    # Then check for weekly schedule configuration
+    date_obj = datetime.strptime(date_str, '%Y-%m-%d')
+    day_of_week = date_obj.weekday()
+    weekly_config = await db.weekly_schedule.find_one({'day_of_week': day_of_week}, {'_id': 0})
+    if weekly_config:
+        return weekly_config.get('is_closed', False), weekly_config.get('custom_hours')
+    
     return False, None
 
 def get_available_activities(date_str: str, hour: int) -> List[str]:
@@ -326,75 +340,62 @@ async def logout(response: Response, session_token: Optional[str] = Cookie(None)
 @api_router.get('/calendar/available-slots')
 async def get_available_time_slots(date: str = Query(...), current_user: User = Depends(get_current_user)):
     """Get available time slots for a specific date"""
-    # Parse date
     try:
         date_obj = datetime.strptime(date, '%Y-%m-%d')
     except:
         raise HTTPException(status_code=400, detail='Formato de fecha inválido')
     
-    # Check if date is within 1 week
     today = datetime.now(timezone.utc).date()
     target_date = date_obj.date()
     days_diff = (target_date - today).days
     
     if days_diff < 0 or days_diff > 7:
-        return []  # Outside valid range
+        return []
     
-    # Check if Sunday
     if date_obj.weekday() == 6:
-        return []  # Closed on Sundays
+        return []
     
-    # Check for schedule overrides
     is_closed, custom_hours = await is_date_closed(date)
     if is_closed:
-        return []  # Date is closed
+        return []
     
-    # Determine available hours
     if custom_hours:
         available_hours = custom_hours
     else:
-        # Use default business hours for weekdays
         available_hours = list(range(6, 13)) + list(range(15, 22))
     
-    # Get current time for 1-hour advance booking rule
     now = datetime.now(timezone.utc)
     current_hour = now.hour
     current_minute = now.minute
     
-    # Build time slots
     time_slots = []
+    MAX_CAPACITY = 5  # Total capacity per time slot
+    
     for hour in available_hours:
-        # Skip if same day and within 1 hour
         if target_date == today:
             if hour <= current_hour:
-                continue  # Past hour
+                continue
             if hour == current_hour + 1 and current_minute > 0:
-                continue  # Less than 1 hour advance
+                continue
         
         time_str = f"{hour:02d}:00"
         activities = get_available_activities(date, hour)
         
-        # Check capacity for each activity
-        activities_info = []
-        has_availability = False
+        # Count TOTAL bookings for this time slot (all activities combined)
+        total_bookings = await db.bookings.count_documents({
+            'date': date,
+            'time': time_str,
+            'status': 'confirmed'
+        })
         
+        has_availability = total_bookings < MAX_CAPACITY
+        
+        activities_info = []
         for activity in activities:
             config = await get_activity_config(activity)
-            max_capacity = config['max_capacity']
             
-            # Count current bookings
-            bookings = await db.bookings.find({
-                'date': date,
-                'time': time_str,
-                'activity_type': activity,
-                'status': 'confirmed'
-            }, {'_id': 0}).to_list(100)
-            
-            current_count = len(bookings)
-            is_available = current_count < max_capacity
-            
-            if is_available:
-                has_availability = True
+            # Activity is available if there's still space in the total slot
+            is_available = has_availability
             
             activities_info.append({
                 'activity_type': activity,
@@ -402,7 +403,7 @@ async def get_available_time_slots(date: str = Query(...), current_user: User = 
                 'credits_cost': config['credits_cost']
             })
         
-        if activities_info:  # Only add if there are activities
+        if activities_info:
             time_slots.append({
                 'time': time_str,
                 'has_availability': has_availability,
@@ -415,7 +416,6 @@ async def get_available_time_slots(date: str = Query(...), current_user: User = 
 @api_router.post('/bookings')
 async def create_booking(booking_data: BookingCreate, current_user: User = Depends(get_current_user)):
     """Create a new booking"""
-    # Validate date and time
     try:
         booking_datetime = datetime.strptime(f"{booking_data.date} {booking_data.time}", '%Y-%m-%d %H:%M')
     except:
@@ -430,7 +430,6 @@ async def create_booking(booking_data: BookingCreate, current_user: User = Depen
     # Get activity config
     config = await get_activity_config(booking_data.activity_type)
     credits_cost = config['credits_cost']
-    max_capacity = config['max_capacity']
     
     # Check user credits
     if current_user.credits < credits_cost:
@@ -446,15 +445,15 @@ async def create_booking(booking_data: BookingCreate, current_user: User = Depen
     if existing:
         raise HTTPException(status_code=400, detail='Ya tienes una reserva para este horario')
     
-    # Check capacity
-    bookings_count = await db.bookings.count_documents({
+    # Check TOTAL capacity for the time slot (all activities combined)
+    MAX_CAPACITY = 5
+    total_bookings = await db.bookings.count_documents({
         'date': booking_data.date,
         'time': booking_data.time,
-        'activity_type': booking_data.activity_type,
         'status': 'confirmed'
     })
     
-    if bookings_count >= max_capacity:
+    if total_bookings >= MAX_CAPACITY:
         raise HTTPException(status_code=400, detail='No hay cupos disponibles para este horario')
     
     # Create booking
@@ -571,7 +570,7 @@ async def cancel_booking(booking_id: str, current_user: User = Depends(get_curre
 async def get_calendar_day(date: str = Query(...), admin: User = Depends(get_admin_user)):
     """Get full schedule for a specific day"""
     # Get all bookings for this date
-    bookings = await db.bookings.find({'date': date}, {'_id': 0}).to_list(1000)
+    bookings = await db.bookings.find({'date': date, 'status': 'confirmed'}, {'_id': 0}).to_list(1000)
     
     # Get all possible hours
     date_obj = datetime.strptime(date, '%Y-%m-%d')
@@ -584,33 +583,24 @@ async def get_calendar_day(date: str = Query(...), admin: User = Depends(get_adm
     
     hours = custom_hours if custom_hours else (list(range(6, 13)) + list(range(15, 22)))
     
+    MAX_CAPACITY = 5
     schedule = []
+    
     for hour in hours:
         time_str = f"{hour:02d}:00"
-        activities = get_available_activities(date, hour)
+        hour_bookings = [b for b in bookings if b['time'] == time_str]
         
-        hour_bookings = [b for b in bookings if b['time'] == time_str and b['status'] == 'confirmed']
+        # Enrich bookings with user info
+        for booking in hour_bookings:
+            user = await db.users.find_one({'user_id': booking['user_id']}, {'_id': 0, 'password': 0})
+            booking['user'] = user
         
         slot_info = {
             'time': time_str,
-            'bookings': []
+            'total_bookings': len(hour_bookings),
+            'max_capacity': MAX_CAPACITY,
+            'bookings': hour_bookings
         }
-        
-        for activity in activities:
-            config = await get_activity_config(activity)
-            activity_bookings = [b for b in hour_bookings if b['activity_type'] == activity]
-            
-            # Get user info for each booking
-            for booking in activity_bookings:
-                user = await db.users.find_one({'user_id': booking['user_id']}, {'_id': 0, 'password': 0})
-                booking['user'] = user
-            
-            slot_info['bookings'].append({
-                'activity_type': activity,
-                'max_capacity': config['max_capacity'],
-                'current_bookings': len(activity_bookings),
-                'bookings_list': activity_bookings
-            })
         
         schedule.append(slot_info)
     
@@ -667,6 +657,32 @@ async def delete_schedule_override(date: str, admin: User = Depends(get_admin_us
     """Delete schedule override"""
     await db.schedule_overrides.delete_one({'date': date})
     return {'message': 'Horario restablecido'}
+
+@api_router.post('/admin/weekly-schedule')
+async def create_weekly_schedule(config: WeeklyScheduleConfig, admin: User = Depends(get_admin_user)):
+    """Configure schedule for a specific day of week (recurring)"""
+    await db.weekly_schedule.update_one(
+        {'day_of_week': config.day_of_week},
+        {'$set': {
+            'is_closed': config.is_closed,
+            'custom_hours': config.custom_hours
+        }},
+        upsert=True
+    )
+    day_names = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo']
+    return {'message': f'Horario configurado para todos los {day_names[config.day_of_week]}'}
+
+@api_router.get('/admin/weekly-schedules')
+async def get_weekly_schedules(admin: User = Depends(get_admin_user)):
+    """Get all weekly schedule configurations"""
+    schedules = await db.weekly_schedule.find({}, {'_id': 0}).to_list(10)
+    return schedules
+
+@api_router.delete('/admin/weekly-schedule/{day_of_week}')
+async def delete_weekly_schedule(day_of_week: int, admin: User = Depends(get_admin_user)):
+    """Delete weekly schedule configuration"""
+    await db.weekly_schedule.delete_one({'day_of_week': day_of_week})
+    return {'message': 'Configuración semanal eliminada'}
 
 @api_router.get('/admin/users')
 async def get_all_users(admin: User = Depends(get_admin_user)):
