@@ -1,0 +1,142 @@
+{
+  "project_name": "Spark Fit",
+  "identity": {
+    "brand_name": "Spark Fit - Centro de Entrenamientos",
+    "tone": "Premium, Strong, Sexy, Energetic, High-Performance",
+    "target_audience": "Adults 25-55, high-income, seeking transformation",
+    "core_message": "Cambiá tu estilo de vida fortaleciendo tu mente y tu cuerpo"
+  },
+  "typography": {
+    "font_family": {
+      "headings": "Barlow Condensed, sans-serif",
+      "body": "Manrope, sans-serif",
+      "accent": "Teko, sans-serif"
+    },
+    "font_weights": {
+      "headings": "700, 800",
+      "body": "400, 500"
+    },
+    "scale": {
+      "h1": "text-6xl md:text-8xl tracking-tighter uppercase",
+      "h2": "text-4xl md:text-6xl tracking-tight uppercase",
+      "h3": "text-2xl md:text-4xl font-bold uppercase",
+      "body": "text-base md:text-lg leading-relaxed"
+    },
+    "instructions": "Import fonts from Google Fonts: Barlow Condensed (700, 800) and Manrope (400, 500). Use Barlow Condensed for all headings to create a tall, imposing, athletic feel. Use Manrope for high legibility in dashboards and body text."
+  },
+  "colors": {
+    "theme_mode": "dark",
+    "palette": {
+      "primary": {
+        "DEFAULT": "#2563EB",
+        "foreground": "#FFFFFF",
+        "hover": "#1D4ED8",
+        "glow": "0 0 20px rgba(37, 99, 235, 0.5)"
+      },
+      "background": {
+        "DEFAULT": "#09090B",
+        "secondary": "#18181B",
+        "tertiary": "#27272A"
+      },
+      "foreground": {
+        "DEFAULT": "#FAFAFA",
+        "muted": "#A1A1AA"
+      },
+      "accent": {
+        "DEFAULT": "#3B82F6",
+        "cyan": "#06B6D4"
+      },
+      "status": {
+        "success": "#10B981",
+        "warning": "#F59E0B",
+        "error": "#EF4444"
+      }
+    },
+    "gradients": {
+      "hero_overlay": "linear-gradient(to bottom, rgba(9,9,11,0) 0%, rgba(9,9,11,0.8) 80%, rgba(9,9,11,1) 100%)",
+      "blue_glow": "radial-gradient(circle at center, rgba(37, 99, 235, 0.15) 0%, rgba(9,9,11, 0) 70%)"
+    },
+    "css_vars": {
+      "--background": "240 10% 3.9%",
+      "--foreground": "0 0% 98%",
+      "--primary": "221 83% 53%",
+      "--primary-foreground": "0 0% 98%",
+      "--card": "240 10% 3.9%",
+      "--card-foreground": "0 0% 98%",
+      "--border": "240 3.7% 15.9%"
+    }
+  },
+  "layout_strategy": {
+    "marketing": {
+      "grid": "Tetris Grid (12 cols)",
+      "spacing": "Generous (py-24, gap-12)",
+      "alignment": "Asymmetric",
+      "style": "Overlap images with text, use parallax effects, keep whitespace (blackspace) heavy."
+    },
+    "dashboard": {
+      "grid": "Bento Grid (Dense)",
+      "spacing": "Compact (gap-4, p-6)",
+      "card_style": "Flat with 1px border-white/10, no massive shadows, subtle hover glow."
+    },
+    "container": {
+      "max_width": "max-w-7xl",
+      "padding": "px-6 md:px-12"
+    }
+  },
+  "components": {
+    "buttons": {
+      "primary": "bg-primary text-white rounded-none skew-x-[-10deg] uppercase tracking-widest font-bold hover:bg-primary/90 hover:skew-x-0 transition-all duration-300 px-8 py-4",
+      "secondary": "border border-white/20 text-white rounded-none uppercase tracking-widest hover:bg-white hover:text-black transition-all duration-300 px-8 py-4",
+      "ghost": "text-white/60 hover:text-white uppercase tracking-wider"
+    },
+    "cards": {
+      "feature": "bg-zinc-900/50 border border-white/5 p-8 hover:border-primary/50 transition-colors duration-300 group",
+      "dashboard": "bg-zinc-900 border border-zinc-800 rounded-lg p-6"
+    },
+    "inputs": {
+      "style": "bg-zinc-950 border-zinc-800 focus:border-primary focus:ring-1 focus:ring-primary rounded-md h-12"
+    }
+  },
+  "motion": {
+    "guidelines": "Use 'framer-motion' for all entrances. Stagger children. Use 'lenis' for smooth scroll on landing page.",
+    "hover_effects": "Text slide-up, border glow, image slight zoom (scale-105).",
+    "transitions": "transition-all duration-300 ease-out"
+  },
+  "assets": {
+    "images": {
+      "hero_bg": {
+        "url": "https://images.unsplash.com/photo-1770513649465-2c60c8039806?q=85&w=1920&auto=format&fit=crop",
+        "alt": "Dark moody gym interior"
+      },
+      "services": {
+        "training": "https://images.unsplash.com/photo-1700784795176-7ff886439d79?q=85&w=800&auto=format&fit=crop",
+        "rehab": "https://images.unsplash.com/photo-1650044252595-cacd425982ff?q=85&w=800&auto=format&fit=crop",
+        "nutrition": "https://images.unsplash.com/photo-1669490884223-ca6ca27c8766?q=85&w=800&auto=format&fit=crop"
+      },
+      "logo": "https://customer-assets.emergentagent.com/job_spark-elite/artifacts/s7blch7o_Captura%20de%20pantalla%202026-03-18%20024940.png"
+    },
+    "icons_library": "lucide-react (use thin stroke-width={1.5} for elegance)"
+  },
+  "pages_structure": {
+    "landing": [
+      "Hero: Full height, video/image bg, text bottom-left, strong CTA.",
+      "Services: Bento grid 3 cols, hover reveal details.",
+      "About: Split screen, asymmetrical text.",
+      "Trainers/Team: Carousel or horizontal scroll.",
+      "CTA/Contact: Minimalist form, map."
+    ],
+    "dashboard": [
+      "Sidebar: Fixed left, minimal icons.",
+      "Header: User greeting, Credits balance (Big Number).",
+      "Widgets: 'Next Class' (Hero card), 'Weekly Progress' (Chart), 'Calendar' (Interactive)."
+    ]
+  },
+  "universal_guidelines": [
+    "DO NOT use gradients for text.",
+    "DO NOT use rounded-full buttons, use sharp or slightly rounded corners.",
+    "Use 'data-testid' on all interactive elements.",
+    "Ensure 4.5:1 contrast ratio for text.",
+    "Use skeleton loaders for data fetching states.",
+    "Images must have 'object-cover' and grayscale-0 on hover, grayscale-100 initial (optional effect)."
+  ]
+}
