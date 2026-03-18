@@ -218,6 +218,26 @@ const ClientDashboard = () => {
     return colors[activity] || '#2563EB';
   };
 
+  const getStatusLabel = (status) => {
+    const labels = {
+      confirmed: 'Confirmada',
+      cancelled: 'Cancelada',
+      attended: 'Asistió',
+      absent: 'Ausente'
+    };
+    return labels[status] || status;
+  };
+
+  const getStatusColor = (status) => {
+    const colors = {
+      confirmed: 'bg-primary/20 text-primary',
+      cancelled: 'bg-white/5 text-white/40',
+      attended: 'bg-green-500/20 text-green-400',
+      absent: 'bg-red-500/20 text-red-400'
+    };
+    return colors[status] || 'bg-white/5 text-white/40';
+  };
+
   const previousMonth = () => {
     setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1));
   };
@@ -372,12 +392,8 @@ const ClientDashboard = () => {
                     </div>
                     <div className="flex items-center space-x-4">
                       <div className="text-right">
-                        <span className={`px-3 py-1 rounded text-xs font-semibold uppercase ${
-                          booking.status === 'confirmed' 
-                            ? 'bg-primary/20 text-primary' 
-                            : 'bg-white/5 text-white/40'
-                        }`}>
-                          {booking.status === 'confirmed' ? 'Confirmada' : 'Cancelada'}
+                        <span className={`px-3 py-1 rounded text-xs font-semibold uppercase ${getStatusColor(booking.status)}`}>
+                          {getStatusLabel(booking.status)}
                         </span>
                       </div>
                       {booking.status === 'confirmed' && (

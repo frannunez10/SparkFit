@@ -101,6 +101,14 @@ class CreditAssignment(BaseModel):
     credits: int
     reason: str
 
+class AttendanceUpdate(BaseModel):
+    booking_id: str
+    status: str  # 'attended' or 'absent'
+
+class PasswordChange(BaseModel):
+    user_id: str
+    new_password: str
+
 class ActivityConfig(BaseModel):
     activity_type: str
     credits_cost: int
@@ -725,6 +733,44 @@ async def get_all_bookings(admin: User = Depends(get_admin_user)):
             booking['user'] = user_doc
     
     return bookings
+
+@api_router.post('/admin/attendance')
+async def mark_attendance(data: AttendanceUpdate, admin: User = Depends(get_admin_user)):
+    """Mark a booking as attended or absent"""
+    if data.status not in ['attended', 'absent']:
+        raise HTTPException(status_code=400, detail='Estado inválido. Usar: attended o absent')
+    
+    booking = await db.bookings.find_one({'booking_id': data.booking_id}, {'_id': 0})
+    if not booking:
+        raise HTTPException(status_code=404, detail='Reserva no encontrada')
+    
+    if booking['status'] == 'cancelled':
+        raise HTTPException(status_code=400, detail='No se puede marcar asistencia en una reserva cancelada')
+    
+    await db.bookings.update_one(
+        {'booking_id': data.booking_id},
+        {'$set': {'status': data.status, 'marked_at': datetime.now(timezone.utc).isoformat()}}
+    )
+    
+    return {'message': f'Reserva marcada como {data.status}'}
+
+@api_router.post('/admin/change-password')
+async def admin_change_password(data: PasswordChange, admin: User = Depends(get_admin_user)):
+    """Admin changes a user's password"""
+    user_doc = await db.users.find_one({'user_id': data.user_id}, {'_id': 0})
+    if not user_doc:
+        raise HTTPException(status_code=404, detail='Usuario no encontrado')
+    
+    if len(data.new_password) < 6:
+        raise HTTPException(status_code=400, detail='La contraseña debe tener al menos 6 caracteres')
+    
+    hashed_pwd = hash_password(data.new_password)
+    await db.users.update_one(
+        {'user_id': data.user_id},
+        {'$set': {'password': hashed_pwd}}
+    )
+    
+    return {'message': 'Contraseña actualizada exitosamente'}
 
 # ==================== ROOT ENDPOINT ====================
 

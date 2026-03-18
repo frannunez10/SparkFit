@@ -10,6 +10,7 @@ import { LogIn, UserPlus, Eye, EyeOff } from 'lucide-react';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
+const WHATSAPP_NUMBER = '+5492617462186';
 
 const LoginPage = () => {
   const navigate = useNavigate();
@@ -153,6 +154,18 @@ const LoginPage = () => {
                   <LogIn className="w-5 h-5 mr-2" />
                   {loading ? 'Ingresando...' : 'Ingresar'}
                 </Button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const message = encodeURIComponent('Hola, olvidé mi contraseña de Spark Fit y necesito restablecerla. Mi email es: ');
+                    window.open(`https://wa.me/${WHATSAPP_NUMBER.replace(/[^0-9]/g, '')}?text=${message}`, '_blank');
+                  }}
+                  className="w-full text-center text-white/60 hover:text-primary text-sm mt-3 transition-colors"
+                  data-testid="forgot-password-link"
+                >
+                  ¿Olvidaste tu contraseña?
+                </button>
               </form>
 
               <div className="relative my-6">
