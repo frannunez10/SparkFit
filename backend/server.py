@@ -47,7 +47,7 @@ BUSINESS_HOURS = {
 ACTIVITY_SCHEDULE = {
     'entrenamiento': {'days': [0, 1, 2, 3, 4], 'hours': list(range(6, 13)) + list(range(15, 22))},  # L-V all hours
     'rehabilitacion': {'days': [0, 1, 2, 3, 4], 'hours': list(range(6, 13)) + list(range(15, 22))},  # L-V all hours
-    'nutricion': {'days': [1, 2, 5], 'hours': [10, 11, 12]}  # Ma, Mi, Sa at 10, 11, 12
+    'nutricion': {'days': [1, 3, 5], 'hours': [10, 11, 12]}  # Ma, Ju, Sa at 10, 11, 12
 }
 
 app = FastAPI()
