@@ -180,7 +180,7 @@ const ClientDashboard = () => {
     try {
       const response = await axios.delete(`${API}/bookings/${selectedBooking.booking_id}`, { withCredentials: true });
       if (response.data.refunded) {
-        toast.success(\`Turno cancelado. Se devolvieron \${response.data.credits_refunded} créditos\`);
+        toast.success(`Turno cancelado. Se devolvieron ${response.data.credits_refunded} créditos`);
       } else {
         toast.info('Turno cancelado. No se devolvieron créditos (cancelación con menos de 6 horas)');
       }
@@ -197,7 +197,7 @@ const ClientDashboard = () => {
 
   const handleAddCredits = () => {
     const message = encodeURIComponent('Hola, quiero agregar créditos a mi cuenta de Spark Fit.');
-    window.open(\`https://wa.me/\${WHATSAPP_NUMBER.replace(/[^0-9]/g, '')}?text=\${message}\`, '_blank');
+    window.open(`https://wa.me/${WHATSAPP_NUMBER.replace(/[^0-9]/g, '')}?text=${message}`, '_blank');
   };
 
   const getActivityLabel = (activity) => {
@@ -235,15 +235,15 @@ const ClientDashboard = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center" data-testid="loading-spinner">
+      <div className="min-h-screen flex items-center justify-center">
         <div className="w-16 h-16 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen" data-testid="client-dashboard">
-      <header className="bg-zinc-900/50 border-b border-white/5 px-6 py-4" data-testid="dashboard-header">
+    <div className="min-h-screen">
+      <header className="bg-zinc-900/50 border-b border-white/5 px-6 py-4">
         <div className="max-w-7xl mx-auto flex justify-between items-center">
           <div>
             <h1 className="font-barlow text-2xl font-bold text-white uppercase">Panel de Cliente</h1>
@@ -330,7 +330,7 @@ const ClientDashboard = () => {
             variant="outline"
             className="w-full border-primary/30 text-primary hover:bg-primary/10 text-lg py-6"
           >
-            <Plus className="w-5 h-5 mr-2" />
+            <Plus className="w-5 h-5 mr-1" />
             Agregar Créditos
           </Button>
         </div>
@@ -347,9 +347,9 @@ const ClientDashboard = () => {
                 .map((booking, index) => (
                   <div 
                     key={booking.booking_id} 
-                    className={\`border border-white/5 p-4 flex justify-between items-center \${
+                    className={`border border-white/5 p-4 flex justify-between items-center ${
                       booking.status === 'cancelled' ? 'opacity-50' : ''
-                    }\`}
+                    }`}
                   >
                     <div className="flex items-center space-x-4">
                       <div 
@@ -372,11 +372,11 @@ const ClientDashboard = () => {
                     </div>
                     <div className="flex items-center space-x-4">
                       <div className="text-right">
-                        <span className={\`px-3 py-1 rounded text-xs font-semibold uppercase \${
+                        <span className={`px-3 py-1 rounded text-xs font-semibold uppercase ${
                           booking.status === 'confirmed' 
                             ? 'bg-primary/20 text-primary' 
                             : 'bg-white/5 text-white/40'
-                        }\`}>
+                        }`}>
                           {booking.status === 'confirmed' ? 'Confirmada' : 'Cancelada'}
                         </span>
                       </div>
@@ -446,9 +446,9 @@ const ClientDashboard = () => {
                     key={index}
                     onClick={() => dayObj && handleDateSelect(dayObj)}
                     disabled={!dayObj || dayObj.isDisabled}
-                    className={\`
+                    className={`
                       aspect-square p-2 rounded-lg text-sm font-medium transition-all
-                      \${
+                      ${
                         !dayObj
                           ? 'invisible'
                           : dayObj.isSunday
@@ -459,7 +459,7 @@ const ClientDashboard = () => {
                           ? 'bg-primary text-white hover:bg-primary/90 ring-2 ring-primary'
                           : 'bg-zinc-800/50 text-white hover:bg-zinc-700 hover:ring-2 hover:ring-primary/50'
                       }
-                    \`}
+                    `}
                     title={dayObj?.isSunday ? 'Cerrado los domingos' : ''}
                   >
                     {dayObj?.day}
@@ -499,14 +499,14 @@ const ClientDashboard = () => {
                       key={slot.time}
                       onClick={() => handleTimeSelect(slot)}
                       disabled={slot.is_full}
-                      className={\`
+                      className={`
                         p-4 rounded-lg border transition-all text-center
-                        \${
+                        ${
                           slot.is_full
                             ? 'bg-zinc-900/30 border-white/5 text-white/30 cursor-not-allowed'
                             : 'bg-zinc-800/50 border-white/10 text-white hover:border-primary hover:bg-zinc-700'
                         }
-                      \`}
+                      `}
                     >
                       <Clock className="w-6 h-6 mx-auto mb-2" />
                       <p className="font-bold text-lg">{slot.time}</p>
@@ -550,20 +550,20 @@ const ClientDashboard = () => {
                         key={activity.activity_type}
                         onClick={() => handleActivitySelect(activity)}
                         disabled={!activity.available}
-                        className={\`
+                        className={`
                           w-full p-4 rounded-lg border transition-all text-left
-                          \${
+                          ${
                             !activity.available
                               ? 'bg-zinc-900/30 border-white/5 text-white/30 cursor-not-allowed'
                               : selectedActivity?.activity_type === activity.activity_type
                               ? 'bg-primary/20 border-primary ring-2 ring-primary'
                               : 'bg-zinc-800/50 border-white/10 hover:border-primary/50'
                           }
-                        \`}
+                        `}
                       >
                         <div className="flex justify-between items-center">
                           <div>
-                            <h3 className={\`font-bold text-lg uppercase \${!activity.available ? 'text-white/30' : 'text-white'}\`}>
+                            <h3 className={`font-bold text-lg uppercase ${!activity.available ? 'text-white/30' : 'text-white'}`}>
                               {getActivityLabel(activity.activity_type)}
                             </h3>
                             {!activity.available && (
@@ -571,7 +571,7 @@ const ClientDashboard = () => {
                             )}
                           </div>
                           <div className="text-right">
-                            <p className={\`font-bold \${!activity.available ? 'text-white/30' : 'text-primary'}\`}>
+                            <p className={`font-bold ${!activity.available ? 'text-white/30' : 'text-primary'}`}>
                               {activity.credits_cost} créditos
                             </p>
                           </div>
