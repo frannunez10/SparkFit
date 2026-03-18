@@ -7,7 +7,7 @@ import os
 import logging
 from pathlib import Path
 from pydantic import BaseModel, Field, EmailStr, field_validator
-from typing import List, Optional
+from typing import List, Optional, Dict
 import uuid
 from datetime import datetime, timezone, timedelta
 import bcrypt
@@ -35,7 +35,21 @@ JWT_SECRET = os.environ.get('JWT_SECRET', 'sparkfit_secret_key_change_in_product
 JWT_ALGORITHM = 'HS256'
 JWT_EXPIRATION_DAYS = 7
 
-# Create the main app
+# Business hours configuration
+BUSINESS_HOURS = {
+    'weekdays': [
+        {'start': 6, 'end': 13},  # 6am - 1pm (last slot at 12pm)
+        {'start': 15, 'end': 22}  # 3pm - 10pm (last slot at 9pm)
+    ]
+}
+
+# Activity availability
+ACTIVITY_SCHEDULE = {
+    'entrenamiento': {'days': [0, 1, 2, 3, 4], 'hours': list(range(6, 13)) + list(range(15, 22))},  # L-V all hours
+    'rehabilitacion': {'days': [0, 1, 2, 3, 4], 'hours': list(range(6, 13)) + list(range(15, 22))},  # L-V all hours
+    'nutricion': {'days': [1, 2, 5], 'hours': [10, 11, 12]}  # Ma, Mi, Sa at 10, 11, 12
+}
+
 app = FastAPI()
 api_router = APIRouter(prefix="/api")
 
@@ -48,7 +62,7 @@ class UserCreate(BaseModel):
     email: EmailStr
     password: str
     name: str
-    role: str = 'client'  # client or admin
+    role: str = 'client'
 
 class UserLogin(BaseModel):
     email: EmailStr
@@ -66,49 +80,36 @@ class User(BaseModel):
 class GoogleSessionRequest(BaseModel):
     session_id: str
 
-class SlotCreate(BaseModel):
-    activity_type: str  # entrenamiento, rehabilitacion, nutricion
-    date: str  # YYYY-MM-DD
-    time: str  # HH:MM
-    max_capacity: int = 5
-    credits_cost: int = 1
-
-    @field_validator('activity_type')
-    def validate_activity_type(cls, v):
-        allowed = ['entrenamiento', 'rehabilitacion', 'nutricion']
-        if v.lower() not in allowed:
-            raise ValueError(f'activity_type must be one of {allowed}')
-        return v.lower()
-
-class Slot(BaseModel):
-    slot_id: str
-    activity_type: str
+class BookingCreate(BaseModel):
     date: str
     time: str
-    max_capacity: int
-    current_bookings: int = 0
-    credits_cost: int
-    created_at: str
-
-class BookingCreate(BaseModel):
-    slot_id: str
+    activity_type: str
 
 class Booking(BaseModel):
     booking_id: str
     user_id: str
-    slot_id: str
-    activity_type: str
     date: str
     time: str
+    activity_type: str
     credits_cost: int
-    status: str  # confirmed, cancelled
+    status: str
     created_at: str
     cancelled_at: Optional[str] = None
 
 class CreditAssignment(BaseModel):
     user_id: str
-    credits: int  # positive to add, negative to remove
+    credits: int
     reason: str
+
+class ActivityConfig(BaseModel):
+    activity_type: str
+    credits_cost: int
+    max_capacity: int
+
+class ScheduleOverride(BaseModel):
+    date: str
+    is_closed: bool
+    custom_hours: Optional[List[int]] = None
 
 # ==================== HELPER FUNCTIONS ====================
 
@@ -133,7 +134,6 @@ async def get_current_user(authorization: Optional[str] = Cookie(None, alias='se
     if not token:
         raise HTTPException(status_code=401, detail='No autenticado')
     
-    # Check if it's a Google OAuth session token
     session_doc = await db.user_sessions.find_one({'session_token': token}, {'_id': 0})
     if session_doc:
         expires_at = session_doc['expires_at']
@@ -149,7 +149,6 @@ async def get_current_user(authorization: Optional[str] = Cookie(None, alias='se
             raise HTTPException(status_code=404, detail='Usuario no encontrado')
         return User(**user_doc)
     
-    # Otherwise, try JWT token
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
         user_doc = await db.users.find_one({'user_id': payload['user_id']}, {'_id': 0})
@@ -163,7 +162,7 @@ async def get_current_user(authorization: Optional[str] = Cookie(None, alias='se
 
 async def get_admin_user(current_user: User = Depends(get_current_user)) -> User:
     if current_user.role != 'admin':
-        raise HTTPException(status_code=403, detail='Acceso denegado: se requiere rol de administrador')
+        raise HTTPException(status_code=403, detail='Acceso denegado')
     return current_user
 
 async def send_email_async(recipient: str, subject: str, html: str):
@@ -171,12 +170,7 @@ async def send_email_async(recipient: str, subject: str, html: str):
         logger.warning('RESEND_API_KEY not configured, skipping email')
         return
     
-    params = {
-        'from': SENDER_EMAIL,
-        'to': [recipient],
-        'subject': subject,
-        'html': html
-    }
+    params = {'from': SENDER_EMAIL, 'to': [recipient], 'subject': subject, 'html': html}
     
     try:
         email = await asyncio.to_thread(resend.Emails.send, params)
@@ -184,21 +178,54 @@ async def send_email_async(recipient: str, subject: str, html: str):
     except Exception as e:
         logger.error(f'Failed to send email: {str(e)}')
 
+async def get_activity_config(activity_type: str) -> Dict:
+    """Get activity configuration (price, capacity)"""
+    config = await db.activity_config.find_one({'activity_type': activity_type}, {'_id': 0})
+    if not config:
+        # Default values
+        defaults = {
+            'entrenamiento': {'credits_cost': 1, 'max_capacity': 5},
+            'rehabilitacion': {'credits_cost': 1, 'max_capacity': 5},
+            'nutricion': {'credits_cost': 2, 'max_capacity': 1}
+        }
+        return defaults.get(activity_type, {'credits_cost': 1, 'max_capacity': 5})
+    return config
+
+async def is_date_closed(date_str: str) -> tuple[bool, Optional[List[int]]]:
+    """Check if a date is closed or has custom hours"""
+    override = await db.schedule_overrides.find_one({'date': date_str}, {'_id': 0})
+    if override:
+        return override.get('is_closed', False), override.get('custom_hours')
+    return False, None
+
+def get_available_activities(date_str: str, hour: int) -> List[str]:
+    """Get activities available for a specific date and hour"""
+    date_obj = datetime.strptime(date_str, '%Y-%m-%d')
+    day_of_week = date_obj.weekday()  # 0=Monday, 6=Sunday
+    
+    # Sunday is closed
+    if day_of_week == 6:
+        return []
+    
+    available = []
+    for activity, schedule in ACTIVITY_SCHEDULE.items():
+        if day_of_week in schedule['days'] and hour in schedule['hours']:
+            available.append(activity)
+    
+    return available
+
 # ==================== AUTH ENDPOINTS ====================
 
 @api_router.post('/auth/register')
 async def register(user_data: UserCreate):
-    # Check if user exists
     existing = await db.users.find_one({'email': user_data.email}, {'_id': 0})
     if existing:
         raise HTTPException(status_code=400, detail='El email ya está registrado')
     
-    # Hash password
     hashed_pwd = hash_password(user_data.password)
-    
-    # Create user
     user_id = f'user_{uuid.uuid4().hex[:12]}'
-    user_doc = {
+    
+    clean_user = {
         'user_id': user_id,
         'email': user_data.email,
         'password': hashed_pwd,
@@ -208,21 +235,10 @@ async def register(user_data: UserCreate):
         'created_at': datetime.now(timezone.utc).isoformat()
     }
     
-    await db.users.insert_one(user_doc)
-    
-    # Create JWT token
+    await db.users.insert_one(clean_user)
     token = create_jwt_token(user_id, user_data.email, user_data.role)
     
-    # Return clean user data without password and _id
-    clean_user = {
-        'user_id': user_id,
-        'email': user_data.email,
-        'name': user_data.name,
-        'role': user_data.role,
-        'credits': 0,
-        'created_at': user_doc['created_at']
-    }
-    
+    clean_user.pop('password')
     return {'user': clean_user, 'token': token}
 
 @api_router.post('/auth/login')
@@ -233,15 +249,9 @@ async def login(credentials: UserLogin, response: Response):
     
     token = create_jwt_token(user_doc['user_id'], user_doc['email'], user_doc['role'])
     
-    # Set cookie
     response.set_cookie(
-        key='session_token',
-        value=token,
-        httponly=True,
-        secure=True,
-        samesite='none',
-        max_age=JWT_EXPIRATION_DAYS * 24 * 60 * 60,
-        path='/'
+        key='session_token', value=token, httponly=True, secure=True,
+        samesite='none', max_age=JWT_EXPIRATION_DAYS * 24 * 60 * 60, path='/'
     )
     
     user_doc.pop('password')
@@ -249,7 +259,6 @@ async def login(credentials: UserLogin, response: Response):
 
 @api_router.post('/auth/google-session')
 async def google_session(request: GoogleSessionRequest, response: Response):
-    # REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
     session_id = request.session_id
     
     async with httpx.AsyncClient() as client:
@@ -259,7 +268,6 @@ async def google_session(request: GoogleSessionRequest, response: Response):
         )
         if resp.status_code != 200:
             raise HTTPException(status_code=401, detail='Sesión inválida')
-        
         session_data = resp.json()
     
     email = session_data['email']
@@ -267,25 +275,18 @@ async def google_session(request: GoogleSessionRequest, response: Response):
     picture = session_data.get('picture', '')
     session_token = session_data['session_token']
     
-    # Check if user exists
     user_doc = await db.users.find_one({'email': email}, {'_id': 0})
     
     if not user_doc:
-        # Create new user
         user_id = f'user_{uuid.uuid4().hex[:12]}'
         user_doc = {
-            'user_id': user_id,
-            'email': email,
-            'name': name,
-            'role': 'client',
-            'credits': 0,
-            'picture': picture,
+            'user_id': user_id, 'email': email, 'name': name,
+            'role': 'client', 'credits': 0, 'picture': picture,
             'created_at': datetime.now(timezone.utc).isoformat()
         }
         await db.users.insert_one(user_doc)
     else:
         user_id = user_doc['user_id']
-        # Update name and picture if changed
         await db.users.update_one(
             {'user_id': user_id},
             {'$set': {'name': name, 'picture': picture}}
@@ -293,23 +294,15 @@ async def google_session(request: GoogleSessionRequest, response: Response):
         user_doc['name'] = name
         user_doc['picture'] = picture
     
-    # Store session
     await db.user_sessions.insert_one({
-        'user_id': user_id,
-        'session_token': session_token,
+        'user_id': user_id, 'session_token': session_token,
         'expires_at': datetime.now(timezone.utc) + timedelta(days=7),
         'created_at': datetime.now(timezone.utc).isoformat()
     })
     
-    # Set cookie
     response.set_cookie(
-        key='session_token',
-        value=session_token,
-        httponly=True,
-        secure=True,
-        samesite='none',
-        max_age=7 * 24 * 60 * 60,
-        path='/'
+        key='session_token', value=session_token, httponly=True,
+        secure=True, samesite='none', max_age=7 * 24 * 60 * 60, path='/'
     )
     
     if 'password' in user_doc:
@@ -325,281 +318,184 @@ async def get_me(current_user: User = Depends(get_current_user)):
 async def logout(response: Response, session_token: Optional[str] = Cookie(None)):
     if session_token:
         await db.user_sessions.delete_many({'session_token': session_token})
-    
     response.delete_cookie(key='session_token', path='/')
     return {'message': 'Sesión cerrada'}
 
-# ==================== ADMIN ENDPOINTS ====================
-
-@api_router.post('/admin/slots', dependencies=[Depends(get_admin_user)])
-async def create_slot(slot_data: SlotCreate):
-    slot_id = f'slot_{uuid.uuid4().hex[:12]}'
-    slot_doc = {
-        'slot_id': slot_id,
-        'activity_type': slot_data.activity_type,
-        'date': slot_data.date,
-        'time': slot_data.time,
-        'max_capacity': slot_data.max_capacity,
-        'current_bookings': 0,
-        'credits_cost': slot_data.credits_cost,
-        'created_at': datetime.now(timezone.utc).isoformat()
-    }
-    
-    await db.slots.insert_one(slot_doc)
-    return Slot(**slot_doc)
-
-@api_router.get('/admin/slots')
-async def get_all_slots(admin: User = Depends(get_admin_user)):
-    slots = await db.slots.find({}, {'_id': 0}).to_list(1000)
-    return slots
-
-@api_router.delete('/admin/slots/{slot_id}')
-async def delete_slot(slot_id: str, admin: User = Depends(get_admin_user)):
-    # Check if slot has bookings
-    bookings = await db.bookings.find({'slot_id': slot_id, 'status': 'confirmed'}, {'_id': 0}).to_list(100)
-    if bookings:
-        # Cancel all bookings and refund credits
-        for booking in bookings:
-            await db.bookings.update_one(
-                {'booking_id': booking['booking_id']},
-                {'$set': {'status': 'cancelled', 'cancelled_at': datetime.now(timezone.utc).isoformat()}}
-            )
-            await db.users.update_one(
-                {'user_id': booking['user_id']},
-                {'$inc': {'credits': booking['credits_cost']}}
-            )
-            
-            # Send cancellation email
-            user_doc = await db.users.find_one({'user_id': booking['user_id']}, {'_id': 0})
-            if user_doc:
-                html = f"""
-                <h2>Turno Cancelado - Spark Fit</h2>
-                <p>Hola {user_doc['name']},</p>
-                <p>Tu turno ha sido cancelado por el administrador:</p>
-                <ul>
-                    <li><strong>Actividad:</strong> {booking['activity_type'].title()}</li>
-                    <li><strong>Fecha:</strong> {booking['date']}</li>
-                    <li><strong>Hora:</strong> {booking['time']}</li>
-                </ul>
-                <p>Se han devuelto {booking['credits_cost']} créditos a tu cuenta.</p>
-                <p>Saldo actual: {user_doc['credits'] + booking['credits_cost']} créditos</p>
-                """
-                await send_email_async(user_doc['email'], 'Turno Cancelado - Spark Fit', html)
-    
-    result = await db.slots.delete_one({'slot_id': slot_id})
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail='Turno no encontrado')
-    
-    return {'message': 'Turno eliminado y reservas canceladas'}
-
-@api_router.get('/admin/users')
-async def get_all_users(admin: User = Depends(get_admin_user)):
-    users = await db.users.find({}, {'_id': 0, 'password': 0}).to_list(1000)
-    return users
-
-@api_router.post('/admin/credits')
-async def assign_credits(assignment: CreditAssignment, admin: User = Depends(get_admin_user)):
-    user_doc = await db.users.find_one({'user_id': assignment.user_id}, {'_id': 0})
-    if not user_doc:
-        raise HTTPException(status_code=404, detail='Usuario no encontrado')
-    
-    new_credits = user_doc['credits'] + assignment.credits
-    if new_credits < 0:
-        raise HTTPException(status_code=400, detail='No se pueden asignar créditos negativos que resulten en saldo negativo')
-    
-    await db.users.update_one(
-        {'user_id': assignment.user_id},
-        {'$inc': {'credits': assignment.credits}}
-    )
-    
-    # Log transaction
-    await db.credit_transactions.insert_one({
-        'transaction_id': f'txn_{uuid.uuid4().hex[:12]}',
-        'user_id': assignment.user_id,
-        'credits': assignment.credits,
-        'reason': assignment.reason,
-        'admin_id': admin.user_id,
-        'created_at': datetime.now(timezone.utc).isoformat()
-    })
-    
-    return {'message': 'Créditos asignados', 'new_balance': new_credits}
-
-@api_router.get('/admin/bookings')
-async def get_all_bookings(admin: User = Depends(get_admin_user)):
-    bookings = await db.bookings.find({}, {'_id': 0}).to_list(1000)
-    
-    # Enrich with user info
-    for booking in bookings:
-        user_doc = await db.users.find_one({'user_id': booking['user_id']}, {'_id': 0, 'password': 0})
-        if user_doc:
-            booking['user'] = user_doc
-    
-    return bookings
-
 # ==================== CLIENT ENDPOINTS ====================
 
-@api_router.get('/calendar/available')
-async def get_available_slots(
-    date: Optional[str] = Query(None),
-    activity_type: Optional[str] = Query(None),
-    current_user: User = Depends(get_current_user)
-):
-    # Limit to 1 week in advance
-    from datetime import timedelta
+@api_router.get('/calendar/available-slots')
+async def get_available_time_slots(date: str = Query(...), current_user: User = Depends(get_current_user)):
+    """Get available time slots for a specific date"""
+    # Parse date
+    try:
+        date_obj = datetime.strptime(date, '%Y-%m-%d')
+    except:
+        raise HTTPException(status_code=400, detail='Formato de fecha inválido')
+    
+    # Check if date is within 1 week
     today = datetime.now(timezone.utc).date()
-    max_date = today + timedelta(days=7)
+    target_date = date_obj.date()
+    days_diff = (target_date - today).days
     
-    query = {}
-    if date:
-        query_date = datetime.fromisoformat(date).date()
-        if query_date > max_date:
-            return []
-        query['date'] = date
-    if activity_type:
-        query['activity_type'] = activity_type.lower()
+    if days_diff < 0 or days_diff > 7:
+        return []  # Outside valid range
     
-    slots = await db.slots.find(query, {'_id': 0}).to_list(1000)
+    # Check if Sunday
+    if date_obj.weekday() == 6:
+        return []  # Closed on Sundays
     
-    # Add availability info but don't expose exact numbers
-    for slot in slots:
-        slot['available'] = slot['current_bookings'] < slot['max_capacity']
-        slot['is_full'] = slot['current_bookings'] >= slot['max_capacity']
+    # Check for schedule overrides
+    is_closed, custom_hours = await is_date_closed(date)
+    if is_closed:
+        return []  # Date is closed
     
-    return slots
-
-@api_router.get('/calendar/time-slots')
-async def get_time_slots_by_date(
-    date: str = Query(...),
-    current_user: User = Depends(get_current_user)
-):
-    """Get available time slots for a specific date, grouped by hour"""
-    # Limit to 1 week in advance
-    from datetime import timedelta
-    today = datetime.now(timezone.utc).date()
-    max_date = today + timedelta(days=7)
-    query_date = datetime.fromisoformat(date).date()
+    # Determine available hours
+    if custom_hours:
+        available_hours = custom_hours
+    else:
+        # Use default business hours for weekdays
+        available_hours = list(range(6, 13)) + list(range(15, 22))
     
-    if query_date > max_date:
-        return []
+    # Get current time for 1-hour advance booking rule
+    now = datetime.now(timezone.utc)
+    current_hour = now.hour
+    current_minute = now.minute
     
-    # Get all slots for this date
-    slots = await db.slots.find({'date': date}, {'_id': 0}).to_list(1000)
-    
-    # Group by time and check availability
-    time_slots = {}
-    for slot in slots:
-        time = slot['time']
-        if time not in time_slots:
-            time_slots[time] = {
-                'time': time,
-                'slots': [],
-                'has_available': False,
-                'is_full': True
-            }
+    # Build time slots
+    time_slots = []
+    for hour in available_hours:
+        # Skip if same day and within 1 hour
+        if target_date == today:
+            if hour <= current_hour:
+                continue  # Past hour
+            if hour == current_hour + 1 and current_minute > 0:
+                continue  # Less than 1 hour advance
         
-        is_available = slot['current_bookings'] < slot['max_capacity']
-        time_slots[time]['slots'].append({
-            'slot_id': slot['slot_id'],
-            'activity_type': slot['activity_type'],
-            'available': is_available,
-            'credits_cost': slot['credits_cost']
-        })
+        time_str = f"{hour:02d}:00"
+        activities = get_available_activities(date, hour)
         
-        if is_available:
-            time_slots[time]['has_available'] = True
-            time_slots[time]['is_full'] = False
-    
-    # Convert to list and sort by time
-    result = sorted(time_slots.values(), key=lambda x: x['time'])
-    return result
-
-@api_router.get('/calendar/activities-for-slot')
-async def get_activities_for_slot(
-    date: str = Query(...),
-    time: str = Query(...),
-    current_user: User = Depends(get_current_user)
-):
-    """Get available activities for a specific date and time"""
-    slots = await db.slots.find({
-        'date': date,
-        'time': time
-    }, {'_id': 0}).to_list(100)
-    
-    activities = []
-    for slot in slots:
-        if slot['current_bookings'] < slot['max_capacity']:
-            activities.append({
-                'slot_id': slot['slot_id'],
-                'activity_type': slot['activity_type'],
-                'credits_cost': slot['credits_cost']
+        # Check capacity for each activity
+        activities_info = []
+        has_availability = False
+        
+        for activity in activities:
+            config = await get_activity_config(activity)
+            max_capacity = config['max_capacity']
+            
+            # Count current bookings
+            bookings = await db.bookings.find({
+                'date': date,
+                'time': time_str,
+                'activity_type': activity,
+                'status': 'confirmed'
+            }, {'_id': 0}).to_list(100)
+            
+            current_count = len(bookings)
+            is_available = current_count < max_capacity
+            
+            if is_available:
+                has_availability = True
+            
+            activities_info.append({
+                'activity_type': activity,
+                'available': is_available,
+                'credits_cost': config['credits_cost']
+            })
+        
+        if activities_info:  # Only add if there are activities
+            time_slots.append({
+                'time': time_str,
+                'has_availability': has_availability,
+                'is_full': not has_availability,
+                'activities': activities_info
             })
     
-    return activities
+    return time_slots
 
 @api_router.post('/bookings')
 async def create_booking(booking_data: BookingCreate, current_user: User = Depends(get_current_user)):
-    # Get slot
-    slot_doc = await db.slots.find_one({'slot_id': booking_data.slot_id}, {'_id': 0})
-    if not slot_doc:
-        raise HTTPException(status_code=404, detail='Turno no encontrado')
+    """Create a new booking"""
+    # Validate date and time
+    try:
+        booking_datetime = datetime.strptime(f"{booking_data.date} {booking_data.time}", '%Y-%m-%d %H:%M')
+    except:
+        raise HTTPException(status_code=400, detail='Formato de fecha/hora inválido')
     
-    # Check availability
-    if slot_doc['current_bookings'] >= slot_doc['max_capacity']:
-        raise HTTPException(status_code=400, detail='Turno lleno')
+    # Check 1-hour advance booking
+    now = datetime.now(timezone.utc)
+    time_until_booking = (booking_datetime - now.replace(tzinfo=None)).total_seconds() / 3600
+    if time_until_booking < 1:
+        raise HTTPException(status_code=400, detail='Debe reservar con mínimo 1 hora de anticipación')
+    
+    # Get activity config
+    config = await get_activity_config(booking_data.activity_type)
+    credits_cost = config['credits_cost']
+    max_capacity = config['max_capacity']
     
     # Check user credits
-    if current_user.credits < slot_doc['credits_cost']:
+    if current_user.credits < credits_cost:
         raise HTTPException(status_code=400, detail='Créditos insuficientes')
     
-    # Check if user already booked this slot
+    # Check if user already has a booking for this slot
     existing = await db.bookings.find_one({
         'user_id': current_user.user_id,
-        'slot_id': booking_data.slot_id,
+        'date': booking_data.date,
+        'time': booking_data.time,
         'status': 'confirmed'
     }, {'_id': 0})
     if existing:
-        raise HTTPException(status_code=400, detail='Ya tienes una reserva para este turno')
+        raise HTTPException(status_code=400, detail='Ya tienes una reserva para este horario')
+    
+    # Check capacity
+    bookings_count = await db.bookings.count_documents({
+        'date': booking_data.date,
+        'time': booking_data.time,
+        'activity_type': booking_data.activity_type,
+        'status': 'confirmed'
+    })
+    
+    if bookings_count >= max_capacity:
+        raise HTTPException(status_code=400, detail='No hay cupos disponibles para este horario')
     
     # Create booking
     booking_id = f'booking_{uuid.uuid4().hex[:12]}'
     booking_doc = {
         'booking_id': booking_id,
         'user_id': current_user.user_id,
-        'slot_id': booking_data.slot_id,
-        'activity_type': slot_doc['activity_type'],
-        'date': slot_doc['date'],
-        'time': slot_doc['time'],
-        'credits_cost': slot_doc['credits_cost'],
+        'date': booking_data.date,
+        'time': booking_data.time,
+        'activity_type': booking_data.activity_type,
+        'credits_cost': credits_cost,
         'status': 'confirmed',
         'created_at': datetime.now(timezone.utc).isoformat()
     }
     
     await db.bookings.insert_one(booking_doc)
     
-    # Update slot bookings count
-    await db.slots.update_one(
-        {'slot_id': booking_data.slot_id},
-        {'$inc': {'current_bookings': 1}}
-    )
-    
     # Deduct credits
     await db.users.update_one(
         {'user_id': current_user.user_id},
-        {'$inc': {'credits': -slot_doc['credits_cost']}}
+        {'$inc': {'credits': -credits_cost}}
     )
     
     # Send confirmation email
+    activity_labels = {
+        'entrenamiento': 'Entrenamiento',
+        'rehabilitacion': 'Rehabilitación',
+        'nutricion': 'Nutrición'
+    }
     html = f"""
     <h2>Reserva Confirmada - Spark Fit</h2>
     <p>Hola {current_user.name},</p>
     <p>Tu reserva ha sido confirmada:</p>
     <ul>
-        <li><strong>Actividad:</strong> {slot_doc['activity_type'].title()}</li>
-        <li><strong>Fecha:</strong> {slot_doc['date']}</li>
-        <li><strong>Hora:</strong> {slot_doc['time']}</li>
-        <li><strong>Créditos:</strong> {slot_doc['credits_cost']}</li>
+        <li><strong>Actividad:</strong> {activity_labels.get(booking_data.activity_type, booking_data.activity_type)}</li>
+        <li><strong>Fecha:</strong> {booking_data.date}</li>
+        <li><strong>Hora:</strong> {booking_data.time}</li>
+        <li><strong>Créditos:</strong> {credits_cost}</li>
     </ul>
-    <p>Saldo restante: {current_user.credits - slot_doc['credits_cost']} créditos</p>
+    <p>Saldo restante: {current_user.credits - credits_cost} créditos</p>
+    <p><strong>Recordatorio:</strong> Puedes cancelar hasta 6 horas antes sin perder créditos.</p>
     <p>¡Te esperamos en Spark Fit!</p>
     """
     await send_email_async(current_user.email, 'Reserva Confirmada - Spark Fit', html)
@@ -623,13 +519,10 @@ async def cancel_booking(booking_id: str, current_user: User = Depends(get_curre
     if booking_doc['status'] == 'cancelled':
         raise HTTPException(status_code=400, detail='La reserva ya está cancelada')
     
-    # Check cancellation policy (6 hours)
-    booking_datetime = datetime.fromisoformat(f"{booking_doc['date']}T{booking_doc['time']}:00")
-    if booking_datetime.tzinfo is None:
-        booking_datetime = booking_datetime.replace(tzinfo=timezone.utc)
-    
+    # Check 6-hour cancellation policy
+    booking_datetime = datetime.strptime(f"{booking_doc['date']} {booking_doc['time']}", '%Y-%m-%d %H:%M')
     now = datetime.now(timezone.utc)
-    hours_until = (booking_datetime - now).total_seconds() / 3600
+    hours_until = (booking_datetime - now.replace(tzinfo=None)).total_seconds() / 3600
     
     refund_credits = hours_until > 6
     
@@ -637,12 +530,6 @@ async def cancel_booking(booking_id: str, current_user: User = Depends(get_curre
     await db.bookings.update_one(
         {'booking_id': booking_id},
         {'$set': {'status': 'cancelled', 'cancelled_at': datetime.now(timezone.utc).isoformat()}}
-    )
-    
-    # Update slot
-    await db.slots.update_one(
-        {'slot_id': booking_doc['slot_id']},
-        {'$inc': {'current_bookings': -1}}
     )
     
     # Refund credits if applicable
@@ -653,12 +540,17 @@ async def cancel_booking(booking_id: str, current_user: User = Depends(get_curre
         )
     
     # Send cancellation email
+    activity_labels = {
+        'entrenamiento': 'Entrenamiento',
+        'rehabilitacion': 'Rehabilitación',
+        'nutricion': 'Nutrición'
+    }
     html = f"""
     <h2>Reserva Cancelada - Spark Fit</h2>
     <p>Hola {current_user.name},</p>
     <p>Tu reserva ha sido cancelada:</p>
     <ul>
-        <li><strong>Actividad:</strong> {booking_doc['activity_type'].title()}</li>
+        <li><strong>Actividad:</strong> {activity_labels.get(booking_doc['activity_type'], booking_doc['activity_type'])}</li>
         <li><strong>Fecha:</strong> {booking_doc['date']}</li>
         <li><strong>Hora:</strong> {booking_doc['time']}</li>
     </ul>
@@ -673,13 +565,157 @@ async def cancel_booking(booking_id: str, current_user: User = Depends(get_curre
         'credits_refunded': booking_doc['credits_cost'] if refund_credits else 0
     }
 
+# ==================== ADMIN ENDPOINTS ====================
+
+@api_router.get('/admin/calendar-day')
+async def get_calendar_day(date: str = Query(...), admin: User = Depends(get_admin_user)):
+    """Get full schedule for a specific day"""
+    # Get all bookings for this date
+    bookings = await db.bookings.find({'date': date}, {'_id': 0}).to_list(1000)
+    
+    # Get all possible hours
+    date_obj = datetime.strptime(date, '%Y-%m-%d')
+    if date_obj.weekday() == 6:  # Sunday
+        return {'date': date, 'is_closed': True, 'schedule': []}
+    
+    is_closed, custom_hours = await is_date_closed(date)
+    if is_closed:
+        return {'date': date, 'is_closed': True, 'schedule': []}
+    
+    hours = custom_hours if custom_hours else (list(range(6, 13)) + list(range(15, 22)))
+    
+    schedule = []
+    for hour in hours:
+        time_str = f"{hour:02d}:00"
+        activities = get_available_activities(date, hour)
+        
+        hour_bookings = [b for b in bookings if b['time'] == time_str and b['status'] == 'confirmed']
+        
+        slot_info = {
+            'time': time_str,
+            'bookings': []
+        }
+        
+        for activity in activities:
+            config = await get_activity_config(activity)
+            activity_bookings = [b for b in hour_bookings if b['activity_type'] == activity]
+            
+            # Get user info for each booking
+            for booking in activity_bookings:
+                user = await db.users.find_one({'user_id': booking['user_id']}, {'_id': 0, 'password': 0})
+                booking['user'] = user
+            
+            slot_info['bookings'].append({
+                'activity_type': activity,
+                'max_capacity': config['max_capacity'],
+                'current_bookings': len(activity_bookings),
+                'bookings_list': activity_bookings
+            })
+        
+        schedule.append(slot_info)
+    
+    return {'date': date, 'is_closed': False, 'schedule': schedule}
+
+@api_router.get('/admin/config/activities')
+async def get_activities_config(admin: User = Depends(get_admin_user)):
+    """Get configuration for all activities"""
+    configs = await db.activity_config.find({}, {'_id': 0}).to_list(100)
+    
+    # Ensure all activities have config
+    default_activities = ['entrenamiento', 'rehabilitacion', 'nutricion']
+    for activity in default_activities:
+        if not any(c['activity_type'] == activity for c in configs):
+            config = await get_activity_config(activity)
+            configs.append({'activity_type': activity, **config})
+    
+    return configs
+
+@api_router.put('/admin/config/activity')
+async def update_activity_config(config: ActivityConfig, admin: User = Depends(get_admin_user)):
+    """Update activity configuration"""
+    await db.activity_config.update_one(
+        {'activity_type': config.activity_type},
+        {'$set': {
+            'credits_cost': config.credits_cost,
+            'max_capacity': config.max_capacity
+        }},
+        upsert=True
+    )
+    return {'message': 'Configuración actualizada'}
+
+@api_router.post('/admin/schedule-override')
+async def create_schedule_override(override: ScheduleOverride, admin: User = Depends(get_admin_user)):
+    """Create or update schedule override for a specific date"""
+    await db.schedule_overrides.update_one(
+        {'date': override.date},
+        {'$set': {
+            'is_closed': override.is_closed,
+            'custom_hours': override.custom_hours
+        }},
+        upsert=True
+    )
+    return {'message': 'Horario actualizado'}
+
+@api_router.get('/admin/schedule-overrides')
+async def get_schedule_overrides(admin: User = Depends(get_admin_user)):
+    """Get all schedule overrides"""
+    overrides = await db.schedule_overrides.find({}, {'_id': 0}).to_list(1000)
+    return overrides
+
+@api_router.delete('/admin/schedule-override/{date}')
+async def delete_schedule_override(date: str, admin: User = Depends(get_admin_user)):
+    """Delete schedule override"""
+    await db.schedule_overrides.delete_one({'date': date})
+    return {'message': 'Horario restablecido'}
+
+@api_router.get('/admin/users')
+async def get_all_users(admin: User = Depends(get_admin_user)):
+    users = await db.users.find({}, {'_id': 0, 'password': 0}).to_list(1000)
+    return users
+
+@api_router.post('/admin/credits')
+async def assign_credits(assignment: CreditAssignment, admin: User = Depends(get_admin_user)):
+    user_doc = await db.users.find_one({'user_id': assignment.user_id}, {'_id': 0})
+    if not user_doc:
+        raise HTTPException(status_code=404, detail='Usuario no encontrado')
+    
+    new_credits = user_doc['credits'] + assignment.credits
+    if new_credits < 0:
+        raise HTTPException(status_code=400, detail='No se pueden asignar créditos que resulten en saldo negativo')
+    
+    await db.users.update_one(
+        {'user_id': assignment.user_id},
+        {'$inc': {'credits': assignment.credits}}
+    )
+    
+    await db.credit_transactions.insert_one({
+        'transaction_id': f'txn_{uuid.uuid4().hex[:12]}',
+        'user_id': assignment.user_id,
+        'credits': assignment.credits,
+        'reason': assignment.reason,
+        'admin_id': admin.user_id,
+        'created_at': datetime.now(timezone.utc).isoformat()
+    })
+    
+    return {'message': 'Créditos asignados', 'new_balance': new_credits}
+
+@api_router.get('/admin/bookings')
+async def get_all_bookings(admin: User = Depends(get_admin_user)):
+    bookings = await db.bookings.find({}, {'_id': 0}).to_list(1000)
+    
+    for booking in bookings:
+        user_doc = await db.users.find_one({'user_id': booking['user_id']}, {'_id': 0, 'password': 0})
+        if user_doc:
+            booking['user'] = user_doc
+    
+    return bookings
+
 # ==================== ROOT ENDPOINT ====================
 
 @api_router.get('/')
 async def root():
-    return {'message': 'Spark Fit API v1.0'}
+    return {'message': 'Spark Fit API v2.0'}
 
-# Include router and middleware
 app.include_router(api_router)
 
 app.add_middleware(

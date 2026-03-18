@@ -4,10 +4,12 @@ import axios from 'axios';
 import { toast } from 'sonner';
 import { Button } from '../components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../components/ui/dialog';
-import { LogOut, Calendar, CreditCard, History, ChevronLeft, ChevronRight, Clock, X } from 'lucide-react';
+import { Alert, AlertDescription } from '../components/ui/alert';
+import { LogOut, Calendar, CreditCard, History, ChevronLeft, ChevronRight, Clock, X, Plus, AlertCircle, Phone } from 'lucide-react';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
+const WHATSAPP_NUMBER = '+5492617462186';
 
 const ClientDashboard = () => {
   const navigate = useNavigate();
@@ -22,13 +24,13 @@ const ClientDashboard = () => {
   const [selectedTime, setSelectedTime] = useState(null);
   const [selectedActivity, setSelectedActivity] = useState(null);
   const [timeSlots, setTimeSlots] = useState([]);
-  const [availableActivities, setAvailableActivities] = useState([]);
   
   // Modal states
   const [showBookingFlow, setShowBookingFlow] = useState(false);
-  const [bookingStep, setBookingStep] = useState(1); // 1: date, 2: time, 3: activity
+  const [bookingStep, setBookingStep] = useState(1);
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [selectedBooking, setSelectedBooking] = useState(null);
+  const [showCreditsModal, setShowCreditsModal] = useState(false);
 
   useEffect(() => {
     if (!user) {
@@ -78,16 +80,14 @@ const ClientDashboard = () => {
     
     const days = [];
     
-    // Add empty slots for days before month starts
     for (let i = 0; i < startingDayOfWeek; i++) {
       days.push(null);
     }
     
-    // Add days of month
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const maxDate = new Date(today);
-    maxDate.setDate(maxDate.getDate() + 7); // 1 week limit
+    maxDate.setDate(maxDate.getDate() + 7);
     
     for (let day = 1; day <= daysInMonth; day++) {
       const currentDay = new Date(year, month, day);
@@ -95,12 +95,14 @@ const ClientDashboard = () => {
       
       const isPast = currentDay < today;
       const isBeyondLimit = currentDay > maxDate;
-      const isDisabled = isPast || isBeyondLimit;
+      const isSunday = currentDay.getDay() === 0;
+      const isDisabled = isPast || isBeyondLimit || isSunday;
       
       days.push({
         day,
         date: currentDay,
         isToday: currentDay.getTime() === today.getTime(),
+        isSunday,
         isDisabled
       });
     }
@@ -123,35 +125,24 @@ const ClientDashboard = () => {
     setSelectedActivity(null);
     setBookingStep(2);
     
-    // Load time slots for selected date
     try {
       const formattedDate = formatDateForAPI(dateObj.date);
-      const response = await axios.get(`${API}/calendar/time-slots?date=${formattedDate}`, { withCredentials: true });
+      const response = await axios.get(`${API}/calendar/available-slots?date=${formattedDate}`, { withCredentials: true });
       setTimeSlots(response.data);
     } catch (error) {
       toast.error('Error al cargar horarios');
     }
   };
 
-  const handleTimeSelect = async (time) => {
-    setSelectedTime(time);
+  const handleTimeSelect = (slot) => {
+    if (slot.is_full) return;
+    setSelectedTime(slot.time);
     setSelectedActivity(null);
     setBookingStep(3);
-    
-    // Load available activities for selected time
-    try {
-      const formattedDate = formatDateForAPI(selectedDate);
-      const response = await axios.get(
-        `${API}/calendar/activities-for-slot?date=${formattedDate}&time=${time}`,
-        { withCredentials: true }
-      );
-      setAvailableActivities(response.data);
-    } catch (error) {
-      toast.error('Error al cargar actividades');
-    }
   };
 
   const handleActivitySelect = (activity) => {
+    if (!activity.available) return;
     setSelectedActivity(activity);
   };
 
@@ -159,13 +150,17 @@ const ClientDashboard = () => {
     if (!selectedActivity) return;
     
     try {
-      await axios.post(`${API}/bookings`, { slot_id: selectedActivity.slot_id }, { withCredentials: true });
+      await axios.post(`${API}/bookings`, {
+        date: formatDateForAPI(selectedDate),
+        time: selectedTime,
+        activity_type: selectedActivity.activity_type
+      }, { withCredentials: true });
+      
       toast.success('Turno reservado exitosamente');
       setShowBookingFlow(false);
       resetBookingFlow();
       loadBookings();
       
-      // Reload user to get updated credits
       const userRes = await axios.get(`${API}/auth/me`, { withCredentials: true });
       setUser(userRes.data);
     } catch (error) {
@@ -179,7 +174,6 @@ const ClientDashboard = () => {
     setSelectedActivity(null);
     setBookingStep(1);
     setTimeSlots([]);
-    setAvailableActivities([]);
   };
 
   const handleCancelBooking = async () => {
@@ -201,6 +195,11 @@ const ClientDashboard = () => {
     } catch (error) {
       toast.error(error.response?.data?.detail || 'Error al cancelar');
     }
+  };
+
+  const handleAddCredits = () => {
+    const message = encodeURIComponent('Hola, quiero agregar créditos a mi cuenta de Spark Fit.');
+    window.open(`https://wa.me/${WHATSAPP_NUMBER.replace(/[^0-9]/g, '')}?text=${message}`, '_blank');
   };
 
   const getActivityLabel = (activity) => {
@@ -232,6 +231,11 @@ const ClientDashboard = () => {
   const monthNames = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
   const dayNames = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 
+  // Get current time slot for selected date and time
+  const getCurrentTimeSlot = () => {
+    return timeSlots.find(slot => slot.time === selectedTime);
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center" data-testid="loading-spinner">
@@ -244,93 +248,119 @@ const ClientDashboard = () => {
     <div className="min-h-screen" data-testid="client-dashboard">
       {/* Header */}
       <header className="bg-zinc-900/50 border-b border-white/5 px-6 py-4" data-testid="dashboard-header">
-        <div className="max-w-7xl mx-auto flex justify-between items-center">
+        <div className=\"max-w-7xl mx-auto flex justify-between items-center\">
           <div>
-            <h1 className="font-barlow text-2xl font-bold text-white uppercase" data-testid="dashboard-title">
+            <h1 className=\"font-barlow text-2xl font-bold text-white uppercase\" data-testid=\"dashboard-title\">
               Panel de Cliente
             </h1>
-            <p className="text-white/60 text-sm">Bienvenido, {user?.name}</p>
+            <p className=\"text-white/60 text-sm\">Bienvenido, {user?.name}</p>
           </div>
-          <div className="flex items-center space-x-4">
-            <div className="glass-card px-4 py-2 flex items-center space-x-2" data-testid="credits-display">
-              <CreditCard className="w-5 h-5 text-primary" />
-              <span className="text-white font-bold">{user?.credits || 0}</span>
-              <span className="text-white/60 text-sm">créditos</span>
+          <div className=\"flex items-center space-x-4\">
+            <div className=\"glass-card px-4 py-2 flex items-center space-x-2\" data-testid=\"credits-display\">
+              <CreditCard className=\"w-5 h-5 text-primary\" />
+              <span className=\"text-white font-bold\">{user?.credits || 0}</span>
+              <span className=\"text-white/60 text-sm\">créditos</span>
             </div>
             <Button 
               onClick={handleLogout} 
-              variant="outline" 
-              className="border-white/20 hover:bg-white/10"
-              data-testid="logout-button"
+              variant=\"outline\" 
+              className=\"border-white/20 hover:bg-white/10\"
+              data-testid=\"logout-button\"
             >
-              <LogOut className="w-4 h-4 mr-2" />
+              <LogOut className=\"w-4 h-4 mr-2\" />
               Salir
             </Button>
           </div>
         </div>
       </header>
 
-      <div className="max-w-7xl mx-auto px-6 py-8">
+      <div className=\"max-w-7xl mx-auto px-6 py-8\">
+        {/* Disclaimers */}
+        <div className=\"grid md:grid-cols-2 gap-4 mb-8\">
+          <Alert className=\"bg-primary/10 border-primary/30\" data-testid=\"booking-disclaimer\">
+            <AlertCircle className=\"h-4 w-4 text-primary\" />
+            <AlertDescription className=\"text-white/80\">
+              <strong>Reservas:</strong> Mínimo 1 hora de anticipación
+            </AlertDescription>
+          </Alert>
+          <Alert className=\"bg-yellow-500/10 border-yellow-500/30\" data-testid=\"cancel-disclaimer\">
+            <AlertCircle className=\"h-4 w-4 text-yellow-500\" />
+            <AlertDescription className=\"text-white/80\">
+              <strong>Cancelaciones:</strong> Hasta 6 horas antes (después se debitan créditos)
+            </AlertDescription>
+          </Alert>
+        </div>
+
         {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-          <div className="glass-card p-6" data-testid="stats-credits">
-            <div className="flex items-center justify-between">
+        <div className=\"grid grid-cols-1 md:grid-cols-3 gap-6 mb-8\">
+          <div className=\"glass-card p-6\" data-testid=\"stats-credits\">
+            <div className=\"flex items-center justify-between\">
               <div>
-                <p className="text-white/60 text-sm mb-1">Créditos Disponibles</p>
-                <p className="font-barlow text-4xl font-bold text-primary">{user?.credits || 0}</p>
+                <p className=\"text-white/60 text-sm mb-1\">Créditos Disponibles</p>
+                <p className=\"font-barlow text-4xl font-bold text-primary\">{user?.credits || 0}</p>
               </div>
-              <CreditCard className="w-12 h-12 text-primary opacity-50" />
+              <CreditCard className=\"w-12 h-12 text-primary opacity-50\" />
             </div>
           </div>
 
-          <div className="glass-card p-6" data-testid="stats-bookings">
-            <div className="flex items-center justify-between">
+          <div className=\"glass-card p-6\" data-testid=\"stats-bookings\">
+            <div className=\"flex items-center justify-between\">
               <div>
-                <p className="text-white/60 text-sm mb-1">Reservas Activas</p>
-                <p className="font-barlow text-4xl font-bold text-white">
+                <p className=\"text-white/60 text-sm mb-1\">Reservas Activas</p>
+                <p className=\"font-barlow text-4xl font-bold text-white\">
                   {myBookings.filter(b => b.status === 'confirmed').length}
                 </p>
               </div>
-              <Calendar className="w-12 h-12 text-primary opacity-50" />
+              <Calendar className=\"w-12 h-12 text-primary opacity-50\" />
             </div>
           </div>
 
-          <div className="glass-card p-6" data-testid="stats-history">
-            <div className="flex items-center justify-between">
+          <div className=\"glass-card p-6\" data-testid=\"stats-history\">
+            <div className=\"flex items-center justify-between\">
               <div>
-                <p className="text-white/60 text-sm mb-1">Total Reservas</p>
-                <p className="font-barlow text-4xl font-bold text-white">{myBookings.length}</p>
+                <p className=\"text-white/60 text-sm mb-1\">Total Reservas</p>
+                <p className=\"font-barlow text-4xl font-bold text-white\">{myBookings.length}</p>
               </div>
-              <History className="w-12 h-12 text-primary opacity-50" />
+              <History className=\"w-12 h-12 text-primary opacity-50\" />
             </div>
           </div>
         </div>
 
-        {/* Reserve Button */}
-        <div className="mb-8">
+        {/* Action Buttons */}
+        <div className=\"grid md:grid-cols-2 gap-4 mb-8\">
           <Button
             onClick={() => {
               resetBookingFlow();
               setShowBookingFlow(true);
             }}
-            className="w-full md:w-auto bg-primary hover:bg-primary/90 text-lg py-6 px-8"
-            data-testid="open-booking-button"
+            className=\"w-full bg-primary hover:bg-primary/90 text-lg py-6\"
+            data-testid=\"open-booking-button\"
           >
-            <Calendar className="w-5 h-5 mr-2" />
+            <Calendar className=\"w-5 h-5 mr-2\" />
             Reservar Nuevo Turno
+          </Button>
+          
+          <Button
+            onClick={() => setShowCreditsModal(true)}
+            variant=\"outline\"
+            className=\"w-full border-primary/30 text-primary hover:bg-primary/10 text-lg py-6\"
+            data-testid=\"add-credits-button\"
+          >
+            <Plus className=\"w-5 h-5 mr-2\" />
+            Agregar Créditos
           </Button>
         </div>
 
         {/* My Bookings */}
-        <div className="glass-card p-6" data-testid="my-bookings-section">
-          <h2 className="font-barlow text-2xl font-bold text-white uppercase mb-6">Mis Reservas</h2>
+        <div className=\"glass-card p-6\" data-testid=\"my-bookings-section\">
+          <h2 className=\"font-barlow text-2xl font-bold text-white uppercase mb-6\">Mis Reservas</h2>
           
           {myBookings.length === 0 ? (
-            <p className="text-white/60 text-center py-8" data-testid="no-bookings-message">
+            <p className=\"text-white/60 text-center py-8\" data-testid=\"no-bookings-message\">
               No tienes reservas todavía. ¡Reserva tu primer turno!
             </p>
           ) : (
-            <div className="space-y-4">
+            <div className=\"space-y-4\">
               {myBookings
                 .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
                 .map((booking, index) => (
@@ -341,27 +371,27 @@ const ClientDashboard = () => {
                     }`}
                     data-testid={`booking-item-${index}`}
                   >
-                    <div className="flex items-center space-x-4">
+                    <div className=\"flex items-center space-x-4\">
                       <div 
-                        className="w-2 h-12 rounded-full" 
+                        className=\"w-2 h-12 rounded-full\" 
                         style={{ backgroundColor: getActivityColor(booking.activity_type) }}
                       ></div>
                       <div>
-                        <h3 className="font-bold text-white uppercase text-sm">
+                        <h3 className=\"font-bold text-white uppercase text-sm\">
                           {getActivityLabel(booking.activity_type)}
                         </h3>
-                        <p className="text-white/60 text-sm flex items-center mt-1">
-                          <Calendar className="w-4 h-4 mr-1" />
+                        <p className=\"text-white/60 text-sm flex items-center mt-1\">
+                          <Calendar className=\"w-4 h-4 mr-1\" />
                           {booking.date}
                         </p>
-                        <p className="text-white/60 text-sm flex items-center mt-1">
-                          <Clock className="w-4 h-4 mr-1" />
+                        <p className=\"text-white/60 text-sm flex items-center mt-1\">
+                          <Clock className=\"w-4 h-4 mr-1\" />
                           {booking.time}
                         </p>
                       </div>
                     </div>
-                    <div className="flex items-center space-x-4">
-                      <div className="text-right">
+                    <div className=\"flex items-center space-x-4\">
+                      <div className=\"text-right\">
                         <span className={`px-3 py-1 rounded text-xs font-semibold uppercase ${
                           booking.status === 'confirmed' 
                             ? 'bg-primary/20 text-primary' 
@@ -376,12 +406,12 @@ const ClientDashboard = () => {
                             setSelectedBooking(booking);
                             setShowCancelModal(true);
                           }}
-                          variant="outline"
-                          size="sm"
-                          className="border-red-500/20 text-red-400 hover:bg-red-500/10"
+                          variant=\"outline\"
+                          size=\"sm\"
+                          className=\"border-red-500/20 text-red-400 hover:bg-red-500/10\"
                           data-testid={`cancel-booking-button-${index}`}
                         >
-                          <X className="w-4 h-4 mr-1" />
+                          <X className=\"w-4 h-4 mr-1\" />
                           Cancelar
                         </Button>
                       )}
@@ -398,13 +428,13 @@ const ClientDashboard = () => {
         if (!open) resetBookingFlow();
         setShowBookingFlow(open);
       }}>
-        <DialogContent className="bg-zinc-900 border-zinc-800 text-white max-w-4xl" data-testid="booking-modal">
+        <DialogContent className=\"bg-zinc-900 border-zinc-800 text-white max-w-4xl\" data-testid=\"booking-modal\">
           <DialogHeader>
-            <DialogTitle className="font-barlow text-2xl uppercase">
+            <DialogTitle className=\"font-barlow text-2xl uppercase\">
               Reservar Turno - Paso {bookingStep} de 3
             </DialogTitle>
-            <DialogDescription className="text-white/60">
-              {bookingStep === 1 && 'Selecciona una fecha (máximo 1 semana de anticipación)'}
+            <DialogDescription className=\"text-white/60\">
+              {bookingStep === 1 && 'Selecciona una fecha (máximo 1 semana de anticipación - Domingos cerrado)'}
               {bookingStep === 2 && 'Selecciona un horario disponible'}
               {bookingStep === 3 && 'Selecciona la actividad que deseas realizar'}
             </DialogDescription>
@@ -412,38 +442,38 @@ const ClientDashboard = () => {
 
           {/* Step 1: Date Selection */}
           {bookingStep === 1 && (
-            <div className="py-4">
-              <div className="flex items-center justify-between mb-6">
+            <div className=\"py-4\">
+              <div className=\"flex items-center justify-between mb-6\">
                 <Button
                   onClick={previousMonth}
-                  variant="ghost"
-                  size="sm"
-                  className="text-white hover:bg-white/10"
+                  variant=\"ghost\"
+                  size=\"sm\"
+                  className=\"text-white hover:bg-white/10\"
                 >
-                  <ChevronLeft className="w-5 h-5" />
+                  <ChevronLeft className=\"w-5 h-5\" />
                 </Button>
-                <h3 className="font-barlow text-xl font-bold text-white">
+                <h3 className=\"font-barlow text-xl font-bold text-white\">
                   {monthNames[currentDate.getMonth()]} {currentDate.getFullYear()}
                 </h3>
                 <Button
                   onClick={nextMonth}
-                  variant="ghost"
-                  size="sm"
-                  className="text-white hover:bg-white/10"
+                  variant=\"ghost\"
+                  size=\"sm\"
+                  className=\"text-white hover:bg-white/10\"
                 >
-                  <ChevronRight className="w-5 h-5" />
+                  <ChevronRight className=\"w-5 h-5\" />
                 </Button>
               </div>
 
-              <div className="grid grid-cols-7 gap-2 mb-2">
+              <div className=\"grid grid-cols-7 gap-2 mb-2\">
                 {dayNames.map(day => (
-                  <div key={day} className="text-center text-white/60 text-sm font-semibold py-2">
+                  <div key={day} className=\"text-center text-white/60 text-sm font-semibold py-2\">
                     {day}
                   </div>
                 ))}
               </div>
 
-              <div className="grid grid-cols-7 gap-2">
+              <div className=\"grid grid-cols-7 gap-2\">
                 {getDaysInMonth(currentDate).map((dayObj, index) => (
                   <button
                     key={index}
@@ -454,15 +484,23 @@ const ClientDashboard = () => {
                       ${
                         !dayObj
                           ? 'invisible'
+                          : dayObj.isSunday
+                          ? 'bg-red-900/20 text-red-400/50 cursor-not-allowed relative'
                           : dayObj.isDisabled
                           ? 'bg-zinc-900/50 text-white/20 cursor-not-allowed'
                           : dayObj.isToday
-                          ? 'bg-primary text-white hover:bg-primary/90'
-                          : 'bg-zinc-800/50 text-white hover:bg-zinc-700'
+                          ? 'bg-primary text-white hover:bg-primary/90 ring-2 ring-primary'
+                          : 'bg-zinc-800/50 text-white hover:bg-zinc-700 hover:ring-2 hover:ring-primary/50'
                       }
                     `}
+                    title={dayObj?.isSunday ? 'Cerrado los domingos' : ''}
                   >
                     {dayObj?.day}
+                    {dayObj?.isSunday && (
+                      <div className=\"absolute inset-0 flex items-center justify-center\">
+                        <div className=\"w-0.5 h-full bg-red-500/50 rotate-45\"></div>
+                      </div>
+                    )}
                   </button>
                 ))}
               </div>
@@ -471,40 +509,40 @@ const ClientDashboard = () => {
 
           {/* Step 2: Time Selection */}
           {bookingStep === 2 && (
-            <div className="py-4">
+            <div className=\"py-4\">
               <Button
                 onClick={() => setBookingStep(1)}
-                variant="ghost"
-                size="sm"
-                className="mb-4 text-white/60 hover:text-white"
+                variant=\"ghost\"
+                size=\"sm\"
+                className=\"mb-4 text-white/60 hover:text-white\"
               >
-                <ChevronLeft className="w-4 h-4 mr-1" />
+                <ChevronLeft className=\"w-4 h-4 mr-1\" />
                 Cambiar fecha
               </Button>
 
-              <p className="text-white mb-4">Fecha seleccionada: <span className="text-primary font-bold">{selectedDate?.toLocaleDateString('es-AR')}</span></p>
+              <p className=\"text-white mb-4\">Fecha seleccionada: <span className=\"text-primary font-bold\">{selectedDate?.toLocaleDateString('es-AR')}</span></p>
 
               {timeSlots.length === 0 ? (
-                <p className="text-white/60 text-center py-8">No hay horarios disponibles para esta fecha</p>
+                <p className=\"text-white/60 text-center py-8\">No hay horarios disponibles para esta fecha</p>
               ) : (
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                <div className=\"grid grid-cols-2 md:grid-cols-4 gap-3\">
                   {timeSlots.map((slot) => (
                     <button
                       key={slot.time}
-                      onClick={() => !slot.is_full && handleTimeSelect(slot.time)}
+                      onClick={() => handleTimeSelect(slot)}
                       disabled={slot.is_full}
                       className={`
                         p-4 rounded-lg border transition-all text-center
                         ${
                           slot.is_full
                             ? 'bg-zinc-900/30 border-white/5 text-white/30 cursor-not-allowed'
-                            : 'bg-zinc-800/50 border-white/10 text-white hover:border-primary hover:bg-zinc-700'
+                            : 'bg-zinc-800/50 border-white/10 text-white hover:border-primary hover:bg-zinc-700 hover:scale-105'
                         }
                       `}
                     >
-                      <Clock className="w-6 h-6 mx-auto mb-2" />
-                      <p className="font-bold">{slot.time}</p>
-                      {slot.is_full && <p className="text-xs mt-1">Completo</p>}
+                      <Clock className=\"w-6 h-6 mx-auto mb-2\" />
+                      <p className=\"font-bold text-lg\">{slot.time}</p>
+                      {slot.is_full && <p className=\"text-xs mt-1 text-red-400\">Completo</p>}
                     </button>
                   ))}
                 </div>
@@ -514,65 +552,78 @@ const ClientDashboard = () => {
 
           {/* Step 3: Activity Selection */}
           {bookingStep === 3 && (
-            <div className="py-4">
+            <div className=\"py-4\">
               <Button
                 onClick={() => setBookingStep(2)}
-                variant="ghost"
-                size="sm"
-                className="mb-4 text-white/60 hover:text-white"
+                variant=\"ghost\"
+                size=\"sm\"
+                className=\"mb-4 text-white/60 hover:text-white\"
               >
-                <ChevronLeft className="w-4 h-4 mr-1" />
+                <ChevronLeft className=\"w-4 h-4 mr-1\" />
                 Cambiar horario
               </Button>
 
-              <p className="text-white mb-2">Fecha: <span className="text-primary font-bold">{selectedDate?.toLocaleDateString('es-AR')}</span></p>
-              <p className="text-white mb-4">Hora: <span className="text-primary font-bold">{selectedTime}</span></p>
+              <p className=\"text-white mb-2\">Fecha: <span className=\"text-primary font-bold\">{selectedDate?.toLocaleDateString('es-AR')}</span></p>
+              <p className=\"text-white mb-4\">Hora: <span className=\"text-primary font-bold\">{selectedTime}</span></p>
 
-              {availableActivities.length === 0 ? (
-                <p className="text-white/60 text-center py-8">No hay actividades disponibles para este horario</p>
-              ) : (
-                <div className="space-y-3">
-                  {availableActivities.map((activity) => (
-                    <button
-                      key={activity.slot_id}
-                      onClick={() => handleActivitySelect(activity)}
-                      className={`
-                        w-full p-4 rounded-lg border transition-all text-left
-                        ${
-                          selectedActivity?.slot_id === activity.slot_id
-                            ? 'bg-primary/20 border-primary'
-                            : 'bg-zinc-800/50 border-white/10 hover:border-primary/50'
-                        }
-                      `}
-                    >
-                      <div className="flex justify-between items-center">
-                        <div>
-                          <h3 className="font-bold text-white text-lg uppercase">
-                            {getActivityLabel(activity.activity_type)}
-                          </h3>
+              {(() => {
+                const timeSlot = getCurrentTimeSlot();
+                if (!timeSlot || !timeSlot.activities || timeSlot.activities.length === 0) {
+                  return <p className=\"text-white/60 text-center py-8\">No hay actividades disponibles para este horario</p>;
+                }
+                
+                return (
+                  <div className=\"space-y-3\">
+                    {timeSlot.activities.map((activity) => (
+                      <button
+                        key={activity.activity_type}
+                        onClick={() => handleActivitySelect(activity)}
+                        disabled={!activity.available}
+                        className={`
+                          w-full p-4 rounded-lg border transition-all text-left
+                          ${
+                            !activity.available
+                              ? 'bg-zinc-900/30 border-white/5 text-white/30 cursor-not-allowed'
+                              : selectedActivity?.activity_type === activity.activity_type
+                              ? 'bg-primary/20 border-primary ring-2 ring-primary'
+                              : 'bg-zinc-800/50 border-white/10 hover:border-primary/50'
+                          }
+                        `}
+                      >
+                        <div className=\"flex justify-between items-center\">
+                          <div>
+                            <h3 className={`font-bold text-lg uppercase ${!activity.available ? 'text-white/30' : 'text-white'}`}>
+                              {getActivityLabel(activity.activity_type)}
+                            </h3>
+                            {!activity.available && (
+                              <p className=\"text-xs text-red-400 mt-1\">Sin cupos disponibles</p>
+                            )}
+                          </div>
+                          <div className=\"text-right\">
+                            <p className={`font-bold ${!activity.available ? 'text-white/30' : 'text-primary'}`}>
+                              {activity.credits_cost} créditos
+                            </p>
+                          </div>
                         </div>
-                        <div className="text-right">
-                          <p className="text-primary font-bold">{activity.credits_cost} créditos</p>
-                        </div>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
+                      </button>
+                    ))}
+                  </div>
+                );
+              })()}
 
               {selectedActivity && (
-                <div className="mt-6 flex space-x-3">
+                <div className=\"mt-6 flex space-x-3\">
                   <Button
                     onClick={handleConfirmBooking}
-                    className="flex-1 bg-primary hover:bg-primary/90"
-                    data-testid="confirm-booking-button"
+                    className=\"flex-1 bg-primary hover:bg-primary/90\"
+                    data-testid=\"confirm-booking-button\"
                   >
                     Confirmar Reserva
                   </Button>
                   <Button
                     onClick={() => setShowBookingFlow(false)}
-                    variant="outline"
-                    className="flex-1 border-white/20"
+                    variant=\"outline\"
+                    className=\"flex-1 border-white/20\"
                   >
                     Cancelar
                   </Button>
@@ -585,48 +636,84 @@ const ClientDashboard = () => {
 
       {/* Cancel Booking Modal */}
       <Dialog open={showCancelModal} onOpenChange={setShowCancelModal}>
-        <DialogContent className="bg-zinc-900 border-zinc-800 text-white" data-testid="cancel-booking-modal">
+        <DialogContent className=\"bg-zinc-900 border-zinc-800 text-white\" data-testid=\"cancel-booking-modal\">
           <DialogHeader>
-            <DialogTitle className="font-barlow text-2xl uppercase">Cancelar Reserva</DialogTitle>
-            <DialogDescription className="text-white/60">
+            <DialogTitle className=\"font-barlow text-2xl uppercase\">Cancelar Reserva</DialogTitle>
+            <DialogDescription className=\"text-white/60\">
               ¿Estás seguro que deseas cancelar esta reserva?
             </DialogDescription>
           </DialogHeader>
           {selectedBooking && (
-            <div className="space-y-4 py-4">
-              <div className="bg-yellow-500/10 border border-yellow-500/20 p-4 rounded">
-                <p className="text-yellow-400 text-sm">
+            <div className=\"space-y-4 py-4\">
+              <div className=\"bg-yellow-500/10 border border-yellow-500/20 p-4 rounded\">
+                <p className=\"text-yellow-400 text-sm\">
                   <strong>Política de cancelación:</strong> Si cancelas con más de 6 horas de anticipación, 
                   se te devolverán los créditos. De lo contrario, no habrá devolución.
                 </p>
               </div>
               
-              <div className="space-y-2">
-                <p className="text-white/60">Actividad: <span className="text-white font-bold">{getActivityLabel(selectedBooking.activity_type)}</span></p>
-                <p className="text-white/60">Fecha: <span className="text-white font-bold">{selectedBooking.date}</span></p>
-                <p className="text-white/60">Hora: <span className="text-white font-bold">{selectedBooking.time}</span></p>
+              <div className=\"space-y-2\">
+                <p className=\"text-white/60\">Actividad: <span className=\"text-white font-bold\">{getActivityLabel(selectedBooking.activity_type)}</span></p>
+                <p className=\"text-white/60\">Fecha: <span className=\"text-white font-bold\">{selectedBooking.date}</span></p>
+                <p className=\"text-white/60\">Hora: <span className=\"text-white font-bold\">{selectedBooking.time}</span></p>
               </div>
               
-              <div className="flex space-x-3">
+              <div className=\"flex space-x-3\">
                 <Button 
                   onClick={handleCancelBooking} 
-                  variant="destructive"
-                  className="flex-1"
-                  data-testid="confirm-cancel-button"
+                  variant=\"destructive\"
+                  className=\"flex-1\"
+                  data-testid=\"confirm-cancel-button\"
                 >
                   Sí, cancelar reserva
                 </Button>
                 <Button 
                   onClick={() => setShowCancelModal(false)} 
-                  variant="outline"
-                  className="flex-1 border-white/20"
-                  data-testid="keep-booking-button"
+                  variant=\"outline\"
+                  className=\"flex-1 border-white/20\"
+                  data-testid=\"keep-booking-button\"
                 >
                   No, mantener reserva
                 </Button>
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Add Credits Modal */}
+      <Dialog open={showCreditsModal} onOpenChange={setShowCreditsModal}>
+        <DialogContent className=\"bg-zinc-900 border-zinc-800 text-white\" data-testid=\"add-credits-modal\">
+          <DialogHeader>
+            <DialogTitle className=\"font-barlow text-2xl uppercase\">Agregar Créditos</DialogTitle>
+            <DialogDescription className=\"text-white/60\">
+              Para agregar créditos a tu cuenta, contacta con nosotros
+            </DialogDescription>
+          </DialogHeader>
+          <div className=\"py-4 space-y-4\">
+            <div className=\"bg-primary/10 border border-primary/30 p-4 rounded\">
+              <p className=\"text-white text-sm\">
+                Para acreditar créditos a tu cuenta, comunícate con nosotros por WhatsApp y un miembro de nuestro equipo te asistirá.
+              </p>
+            </div>
+            
+            <Button
+              onClick={handleAddCredits}
+              className=\"w-full bg-green-600 hover:bg-green-700 text-lg py-6\"
+              data-testid=\"whatsapp-button\"
+            >
+              <Phone className=\"w-5 h-5 mr-2\" />
+              Contactar por WhatsApp
+            </Button>
+            
+            <Button
+              onClick={() => setShowCreditsModal(false)}
+              variant=\"outline\"
+              className=\"w-full border-white/20\"
+            >
+              Cerrar
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </div>
