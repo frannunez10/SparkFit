@@ -213,8 +213,17 @@ async def register(user_data: UserCreate):
     # Create JWT token
     token = create_jwt_token(user_id, user_data.email, user_data.role)
     
-    user_doc.pop('password')
-    return {'user': user_doc, 'token': token}
+    # Return clean user data without password and _id
+    clean_user = {
+        'user_id': user_id,
+        'email': user_data.email,
+        'name': user_data.name,
+        'role': user_data.role,
+        'credits': 0,
+        'created_at': user_doc['created_at']
+    }
+    
+    return {'user': clean_user, 'token': token}
 
 @api_router.post('/auth/login')
 async def login(credentials: UserLogin, response: Response):
