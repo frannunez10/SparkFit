@@ -41,6 +41,7 @@ Sitio web moderno y elegante para un centro de entrenamiento llamado "Spark Fit"
 - [x] **Marcar asistencia desde Admin:** Botones "Asistió" y "Ausente" en reservas confirmadas
 - [x] **"¿Olvidaste tu contraseña?":** Link en login que redirige a WhatsApp con mensaje predefinido
 - [x] **Admin cambia contraseña:** Botón "Contraseña" en lista de usuarios para cambiar contraseña de cualquier cliente
+- [x] **Buscador de usuarios:** Campo de búsqueda en sección Usuarios para filtrar por nombre o email
 
 ## API Endpoints
 ### Auth

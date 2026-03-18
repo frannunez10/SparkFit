@@ -8,7 +8,7 @@ import { Label } from '../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
-import { LogOut, Calendar, CreditCard, Users, Settings, ChevronLeft, ChevronRight, Trash2, Check, X, Key } from 'lucide-react';
+import { LogOut, Calendar, CreditCard, Users, Settings, ChevronLeft, ChevronRight, Trash2, Check, X, Key, Search } from 'lucide-react';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -38,6 +38,8 @@ const AdminDashboard = () => {
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [passwordUser, setPasswordUser] = useState(null);
   const [newPassword, setNewPassword] = useState('');
+  
+  const [userSearchQuery, setUserSearchQuery] = useState('');
   
   const [showOverrideModal, setShowOverrideModal] = useState(false);
   const [overrideType, setOverrideType] = useState('date');
@@ -476,9 +478,24 @@ const AdminDashboard = () => {
 
           <TabsContent value="users">
             <div className="glass-card p-6">
-              <h2 className="font-barlow text-2xl font-bold text-white uppercase mb-6">Gestión de Usuarios</h2>
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="font-barlow text-2xl font-bold text-white uppercase">Gestión de Usuarios</h2>
+                <div className="relative w-72">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-white/40" />
+                  <Input
+                    type="text"
+                    placeholder="Buscar por nombre..."
+                    value={userSearchQuery}
+                    onChange={(e) => setUserSearchQuery(e.target.value)}
+                    className="bg-zinc-950 border-zinc-800 pl-10 h-10"
+                  />
+                </div>
+              </div>
               <div className="space-y-4">
-                {users.map((u) => (
+                {users
+                  .filter(u => u.name.toLowerCase().includes(userSearchQuery.toLowerCase()) || 
+                               u.email.toLowerCase().includes(userSearchQuery.toLowerCase()))
+                  .map((u) => (
                   <div key={u.user_id} className="border border-white/5 p-4 flex justify-between items-center">
                     <div className="flex items-center space-x-4 flex-1">
                       <div className="w-12 h-12 rounded-full bg-primary/20 flex items-center justify-center">
@@ -526,6 +543,10 @@ const AdminDashboard = () => {
                     </div>
                   </div>
                 ))}
+                {users.filter(u => u.name.toLowerCase().includes(userSearchQuery.toLowerCase()) || 
+                               u.email.toLowerCase().includes(userSearchQuery.toLowerCase())).length === 0 && (
+                  <p className="text-white/60 text-center py-8">No se encontraron usuarios con "{userSearchQuery}"</p>
+                )}
               </div>
             </div>
           </TabsContent>
